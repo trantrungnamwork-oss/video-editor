@@ -14,12 +14,9 @@ export type MediaItem =
 
 export interface MediaState {
   items: MediaItem[];
-  /** Clip shown in the preview. */
-  selectedId: string | null;
   /** Adds files and starts probing them; returns the new item ids. */
   addFiles(files: Iterable<File>): string[];
   remove(id: string): void;
-  select(id: string | null): void;
 }
 
 export function createMediaStore(getClient: () => ProbeClient) {
@@ -29,7 +26,6 @@ export function createMediaStore(getClient: () => ProbeClient) {
 
     return {
       items: [],
-      selectedId: null,
       addFiles(files) {
         const added: MediaItem[] = Array.from(files, (file) => ({
           id: crypto.randomUUID(),
@@ -60,13 +56,7 @@ export function createMediaStore(getClient: () => ProbeClient) {
       // A probe still in flight for a removed item settles into nothing: settle() only maps
       // existing ids.
       remove(id) {
-        set((s) => ({
-          items: s.items.filter((it) => it.id !== id),
-          selectedId: s.selectedId === id ? null : s.selectedId,
-        }));
-      },
-      select(id) {
-        set({ selectedId: id });
+        set((s) => ({ items: s.items.filter((it) => it.id !== id) }));
       },
     };
   });

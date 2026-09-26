@@ -1,47 +1,16 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { FPS, observeLongTasks, openWithTestClips, scrubTo, stat, takeLongTasks } from './helpers';
 
-const FPS = 30;
 const DURATION = 4;
 
-// Collect main-thread long tasks (>50 ms) so tests can assert the main thread stays responsive.
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    const w = window as unknown as { __longTasks: number[] };
-    w.__longTasks = [];
-    try {
-      new PerformanceObserver((list) => {
-        for (const e of list.getEntries()) w.__longTasks.push(e.duration);
-      }).observe({ type: 'longtask', buffered: false });
-    } catch {
-      // longtask entries unsupported: the assertion below becomes vacuous.
-    }
-  });
-});
-
-async function openTestClip(page: Page) {
-  await page.goto(`/?testclip=1280x720x${DURATION}@${FPS}`);
-  await page.getByTestId('add-test-clip').click();
-  await expect(page.getByTestId('preview')).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByTestId('play-toggle')).toBeEnabled();
-  await page.getByTestId('stats').locator('summary').click();
-  // Backing store follows the element size (× DPR, capped at 1280×720), never the 300×150 default.
-  await expect(page.getByTestId('stat-canvas')).not.toHaveText(/^(0×0|300×150)$/);
-}
-
-const stat = (page: Page, name: string) =>
-  page
-    .getByTestId(`stat-${name}`)
-    .textContent()
-    .then((t) => Number(t));
-
-const longTasks = (page: Page) =>
-  page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks.splice(0));
+test.beforeEach(async ({ page }) => observeLongTasks(page));
 
 test('plays to the end with audio, bounded frames and a responsive main thread', async ({
   page,
 }) => {
-  await openTestClip(page);
-  await expect(page.locator('[data-testid=thumbnail-strip] img')).toHaveCount(12, {
+  await openWithTestClips(page, 1, DURATION);
+  await expect(page.getByTestId('stat-canvas')).not.toHaveText(/^(0×0|300×150)$/);
+  await expect(page.getByTestId('timeline-clip').locator('img').first()).toBeVisible({
     timeout: 30_000,
   });
   // Thumbnails were persisted to the OPFS cache (manifest is written last, as a commit marker).
@@ -58,7 +27,7 @@ test('plays to the end with audio, bounded frames and a responsive main thread',
     return n;
   });
   expect(cachedClips).toBe(1);
-  await longTasks(page);
+  await takeLongTasks(page);
 
   await page.getByTestId('play-toggle').click();
   await expect(page.getByTestId('play-toggle')).toHaveText('Play', {
@@ -66,22 +35,18 @@ test('plays to the end with audio, bounded frames and a responsive main thread',
   });
   await expect(page.getByTestId('current-time')).toHaveText(`0:0${DURATION}.0`);
 
-  expect(await longTasks(page)).toEqual([]);
+  expect(await takeLongTasks(page)).toEqual([]);
   await expect.poll(() => stat(page, 'decoded')).toBeGreaterThanOrEqual(DURATION * FPS * 0.9);
   expect(await stat(page, 'dropped')).toBeLessThan(DURATION * FPS * 0.25);
-  expect(await stat(page, 'peak-open')).toBeLessThanOrEqual(8); // read-ahead (6) + shown + slack
+  expect(await stat(page, 'peak-open')).toBeLessThanOrEqual(9); // read-ahead 6 + shown + primed
   await expect.poll(() => stat(page, 'open-frames')).toBeLessThanOrEqual(1);
   expect(await stat(page, 'audio')).toBeGreaterThan(0);
   expect(await stat(page, 'audio-late')).toBe(0);
 });
 
-test('seeks and steps frame-accurately', async ({ page }) => {
-  await openTestClip(page);
-  const box = await page.getByTestId('scrubber').boundingBox();
-  if (!box) throw new Error('scrubber not laid out');
-
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-  await expect.poll(() => stat(page, 'shown')).toBeCloseTo(DURATION / 2, 1);
+test('scrubs and steps frame-accurately', async ({ page }) => {
+  await openWithTestClips(page, 1, DURATION);
+  await scrubTo(page, DURATION / 2);
   const mid = await stat(page, 'shown');
 
   await page.getByRole('button', { name: 'Next frame' }).click();
@@ -98,24 +63,19 @@ test('seeks and steps frame-accurately', async ({ page }) => {
 test('releases every decoded frame after scrubbing, playing and closing', async ({ page }) => {
   const logs: string[] = [];
   page.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
-  await openTestClip(page);
-
-  const box = await page.getByTestId('scrubber').boundingBox();
-  if (!box) throw new Error('scrubber not laid out');
-  const y = box.y + box.height / 2;
+  await openWithTestClips(page, 1, DURATION);
 
   await page.getByTestId('play-toggle').click();
   await page.waitForTimeout(500);
-  // Scrub while playing: pauses, fast keyframe seeks while dragging, precise seek on release.
-  await page.mouse.move(box.x + 5, y);
-  await page.mouse.down();
-  for (let i = 0; i <= 20; i++) await page.mouse.move(box.x + (box.width * i) / 20, y);
-  await page.mouse.up();
+  // Scrubbing while playing pauses and seeks; repeated scrolls coalesce in the worker.
+  const viewport = page.getByTestId('timeline-viewport');
+  for (let i = 0; i <= 20; i++) {
+    await viewport.evaluate((el, x) => (el.scrollLeft = x), i * 10);
+  }
   await page.waitForTimeout(500);
   for (let i = 0; i < 5; i++) await page.getByTestId('play-toggle').click();
   await page.waitForTimeout(300);
 
-  await longTasks(page);
   await page.getByRole('button', { name: /^Remove / }).click();
   await expect(page.getByTestId('preview')).toHaveCount(0);
   await expect.poll(() => logs.find((l) => l.includes('[preview] disposed'))).toBeTruthy();

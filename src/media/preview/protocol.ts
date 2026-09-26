@@ -1,7 +1,9 @@
 /** Messages between PreviewPlayer (main thread) and preview.worker.ts. */
+import type { SequenceClip } from './sequence';
 
 export type ToWorker =
-  | { type: 'init'; file: File; canvas: OffscreenCanvas }
+  | { type: 'init'; canvas: OffscreenCanvas }
+  | { type: 'set-sequence'; clips: SequenceClip[] }
   | { type: 'resize'; width: number; height: number }
   | { type: 'play'; t: number; playId: number }
   | { type: 'pause' }
@@ -12,18 +14,21 @@ export type ToWorker =
   | { type: 'dispose' };
 
 export interface WorkerStats {
-  /** Decoded frames currently alive (should be ≤ read-ahead + 1 while playing, ≤ 1 when idle). */
+  /** Decoded frames currently alive (read-ahead + shown + primed next-clip frame). */
   openFrames: number;
   peakOpenFrames: number;
   decodedFrames: number;
   droppedFrames: number;
-  /** Timestamp of the frame currently on the canvas. */
+  /** Timeline timestamp of the frame currently on the canvas. */
   shownTimestamp: number | null;
   canvasWidth: number;
   canvasHeight: number;
+  /** Demuxers currently open (one per media used by the sequence). */
+  openInputs: number;
 }
 
 export interface AudioChunk {
+  /** Timeline time of the first frame. */
   timestamp: number;
   sampleRate: number;
   /** One Float32Array per channel (planar). Transferred, not copied. */
@@ -31,7 +36,7 @@ export interface AudioChunk {
 }
 
 export type FromWorker =
-  | { type: 'ready'; durationSec: number; hasAudio: boolean; frameRate: number | null }
+  | { type: 'ready' }
   | { type: 'seeked'; id: number; timestamp: number | null }
   | { type: 'ended' }
   | { type: 'audio'; chunk: AudioChunk; playId: number }

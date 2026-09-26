@@ -1,12 +1,21 @@
 /**
- * Main-thread preview controller. Owns the playback clock and the AudioContext; everything heavy
- * (demux, decode, drawing) happens in preview.worker.ts on a transferred OffscreenCanvas.
+ * Main-thread preview controller for a sequence of clips. Owns the playback clock and the
+ * AudioContext; everything heavy (demux, decode, drawing) happens in preview.worker.ts on a
+ * transferred OffscreenCanvas. All times here are timeline times.
  *
- * Clock: when the clip has decodable audio, media time follows the audio actually leaving the
- * speaker (AudioScheduler). Otherwise it follows performance.now().
+ * Clock: when any clip has decodable audio, time follows the audio actually leaving the speaker
+ * (AudioScheduler); gaps without audio still advance because the AudioContext clock keeps
+ * running. Otherwise it follows performance.now().
  */
 import { AudioScheduler } from './audioScheduler';
 import type { FromWorker, ToWorker, WorkerStats } from './protocol';
+import {
+  indexAt,
+  schedule,
+  sequenceDuration,
+  type ScheduledClip,
+  type SequenceClip,
+} from './sequence';
 
 /** Audio decoded ahead of the playhead. */
 const AUDIO_LEAD_SEC = 1;
@@ -17,7 +26,6 @@ export interface PlayerSnapshot {
   ready: boolean;
   playing: boolean;
   durationSec: number;
-  frameRate: number | null;
   hasAudio: boolean;
   error: string | null;
 }
@@ -33,7 +41,6 @@ export class PreviewPlayer {
     ready: false,
     playing: false,
     durationSec: 0,
-    frameRate: null,
     hasAudio: false,
     error: null,
   };
@@ -54,15 +61,16 @@ export class PreviewPlayer {
   private pendingStats: ((s: WorkerStats) => void)[] = [];
   private disposeResolve: ((s: WorkerStats) => void) | null = null;
   private disposed = false;
+  private sequence: ScheduledClip[] = [];
 
-  constructor(canvas: HTMLCanvasElement, file: File) {
+  constructor(canvas: HTMLCanvasElement) {
     this.worker = new Worker(new URL('../../workers/preview.worker.ts', import.meta.url), {
       type: 'module',
     });
     this.worker.onmessage = (e: MessageEvent<FromWorker>) => this.onMessage(e.data);
     this.worker.onerror = (e) => this.update({ error: e.message || 'Preview worker crashed' });
     const offscreen = canvas.transferControlToOffscreen();
-    this.send({ type: 'init', file, canvas: offscreen }, [offscreen]);
+    this.send({ type: 'init', canvas: offscreen }, [offscreen]);
     document.addEventListener('visibilitychange', this.onVisibility);
   }
 
@@ -89,9 +97,31 @@ export class PreviewPlayer {
     return () => this.listeners.delete(fn);
   }
 
+  /**
+   * Replaces the clip list (after any edit). Keeps the playhead where it was, clamped to the new
+   * duration, and resumes playback if it was playing.
+   */
+  setSequence(clips: SequenceClip[]): void {
+    const wasPlaying = this.snapshot.playing;
+    const t = this.currentTime;
+    if (wasPlaying) {
+      this.stopClock();
+      this.send({ type: 'pause' });
+    }
+    this.sequence = schedule(clips);
+    const durationSec = sequenceDuration(this.sequence);
+    this.send({ type: 'set-sequence', clips });
+    this.update({ playing: false, durationSec, hasAudio: clips.some((c) => c.hasAudio) });
+    this.pausedAt = Math.min(t, durationSec);
+    this.stepBase = null;
+    if (wasPlaying && this.pausedAt < durationSec - 1e-3) this.play();
+    else this.send({ type: 'seek', id: ++this.seekId, t: this.pausedAt, precise: true });
+  }
+
   /** Must be called from a user gesture on iOS so the AudioContext may start. */
   play(): void {
     if (!this.snapshot.ready || this.snapshot.playing || this.disposed) return;
+    if (this.snapshot.durationSec <= 0) return;
     let from = this.pausedAt;
     if (from >= this.snapshot.durationSec - 1e-3) from = 0;
     this.mediaT0 = from;
@@ -143,8 +173,8 @@ export class PreviewPlayer {
 
   stepFrame(direction: 1 | -1): void {
     if (this.snapshot.playing) this.pause();
-    const fps = this.snapshot.frameRate ?? 30;
     const base = this.stepBase ?? this.shownTimestamp ?? this.pausedAt;
+    const fps = this.sequence[indexAt(this.sequence, base)]?.frameRate ?? 30;
     const next = Math.min(Math.max(0, base + direction / fps), this.snapshot.durationSec);
     // Aim into the middle of the target frame so float rounding never lands on a neighbour.
     this.seek(next + 0.5 / fps);
@@ -222,12 +252,7 @@ export class PreviewPlayer {
   private onMessage(msg: FromWorker) {
     switch (msg.type) {
       case 'ready':
-        this.update({
-          ready: true,
-          durationSec: msg.durationSec,
-          hasAudio: msg.hasAudio,
-          frameRate: msg.frameRate,
-        });
+        this.update({ ready: true });
         break;
       case 'seeked':
         if (msg.id === this.seekId || msg.id === -1) {

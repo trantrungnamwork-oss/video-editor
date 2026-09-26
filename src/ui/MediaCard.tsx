@@ -1,5 +1,6 @@
 import type { MediaWarning } from '../media/probe';
 import { useMediaStore, type MediaItem } from '../state/mediaStore';
+import { mediaSourceOf, useProjectStore } from '../state/projectStore';
 import { audioCodecLabel, formatBytes, formatDuration, formatFps, videoCodecLabel } from './format';
 
 const WARNING_LABELS: Record<Exclude<MediaWarning, 'video-undecodable'>, string> = {
@@ -15,14 +16,22 @@ const ERROR_LABELS = {
   'read-failed': 'Could not read this file.',
 } as const;
 
-export function MediaCard({ item, selected }: { item: MediaItem; selected: boolean }) {
-  const remove = useMediaStore((s) => s.remove);
-  const select = useMediaStore((s) => s.select);
-  const previewable = item.status === 'ready' && item.info.canDecode;
+export function MediaCard({ item }: { item: MediaItem }) {
+  const removeItem = useMediaStore((s) => s.remove);
+  const addToTimeline = useProjectStore((s) => s.addMedia);
+  const usedInTimeline = useProjectStore((s) =>
+    s.history.present.clips.some((c) => c.mediaId === item.id),
+  );
+  const addable = item.status === 'ready' && item.info.canDecode;
+  const remove = () => {
+    // Removing from the library also removes the media's clips (one undoable step).
+    useProjectStore.getState().removeMedia(item.id);
+    removeItem(item.id);
+  };
 
   return (
     <li
-      className={`rounded-lg bg-neutral-900 p-3 ${selected ? 'ring-2 ring-green-500' : ''}`}
+      className="rounded-lg bg-neutral-900 p-3"
       data-testid="media-card"
       data-status={item.status}
     >
@@ -33,18 +42,19 @@ export function MediaCard({ item, selected }: { item: MediaItem; selected: boole
           </p>
           <p className="text-sm text-neutral-400">{formatBytes(item.file.size)}</p>
         </div>
-        {previewable && !selected && (
+        {addable && (
           <button
             type="button"
-            onClick={() => select(item.id)}
+            onClick={() => addToTimeline(mediaSourceOf(item.id, item.info))}
             className="flex min-h-11 shrink-0 items-center rounded-lg bg-neutral-800 px-3 text-sm font-medium active:bg-neutral-700"
+            aria-label={`Add ${item.file.name} to timeline`}
           >
-            Preview
+            {usedInTimeline ? '+ Again' : '+ Add'}
           </button>
         )}
         <button
           type="button"
-          onClick={() => remove(item.id)}
+          onClick={remove}
           aria-label={`Remove ${item.file.name}`}
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-xl text-neutral-400 active:bg-neutral-800"
         >

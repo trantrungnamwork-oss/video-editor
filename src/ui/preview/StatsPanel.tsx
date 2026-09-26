@@ -33,6 +33,7 @@ export function StatsPanel({ player }: { player: PreviewPlayer }) {
           <Stat label="dropped" value={stats.droppedFrames} testId="stat-dropped" />
           <Stat label="audio chunks" value={stats.audioScheduledChunks} testId="stat-audio" />
           <Stat label="audio late" value={stats.audioLateChunks} testId="stat-audio-late" />
+          <Stat label="open inputs" value={stats.openInputs} testId="stat-inputs" />
           <Stat
             label="canvas"
             value={`${stats.canvasWidth}×${stats.canvasHeight}`}
