@@ -52,3 +52,26 @@ Format: see CLAUDE.md §8.
 - Proposal: 1 + 3 in M4 (export is the peak-memory path), 2 as extra telemetry on `/debug`
   only. M2 keeps the static bound (6 frames ahead) and the backing store capped at video
   resolution.
+
+## TL-004: Resuming an export after the OS kills the tab
+
+- Affected platforms: iOS Safari (aggressive tab eviction when backgrounded), Android Chrome
+  under memory pressure
+- Severity: Serious
+- User impact: CLAUDE.md §7 asks for export checkpoints in OPFS so an export can resume after the
+  tab is killed. Writing checkpoints is possible, but after a kill the page reloads without the
+  source videos: `File` objects from the picker cannot be persisted, and the project itself is not
+  persisted yet. Without the sources there is nothing to resume from.
+- Options:
+  1. Persist the project (OPFS JSON) and the encoded packets per segment; after a reload, ask the
+     user to re-select the same videos (matched by name + size + last-modified), then continue
+     encoding from the last finished segment. + no extra storage; − one extra step for the user,
+     fails if they cannot find the same files.
+  2. Copy every imported video into OPFS on import, persist the project, resume fully
+     automatically. + seamless; − doubles storage, slow imports for big files, iOS quota limits,
+     and a copy step before editing can start.
+  3. No resume: keep Wake Lock + warnings, and make restart cheap (settings remembered).
+     - simple, no risk of corrupt resumes; − a killed 1080p export restarts from zero.
+- Proposal: option 1, built together with project persistence (which the editor needs anyway so
+  a reload doesn't lose the edit). M4 ships option 3's safeguards now; the packet-log checkpoint
+  lands once you approve.

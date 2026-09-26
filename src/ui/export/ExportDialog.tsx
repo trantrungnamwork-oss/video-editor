@@ -1,0 +1,350 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ExportClient, type ExportEvent } from '../../media/export/exportClient';
+import type { ExportJob } from '../../media/export/exportPipeline';
+import {
+  AUDIO_BITRATE,
+  estimateRemainingSec,
+  exportFileName,
+  type Preset,
+  type PresetPlan,
+} from '../../media/export/plan';
+import { formatBytes, formatDuration } from '../format';
+import { useWakeLock } from './useWakeLock';
+
+interface Props {
+  clips: ExportJob['clips'];
+  durationSec: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  fps: number;
+  onClose: () => void;
+}
+
+type Phase =
+  | { kind: 'planning' }
+  | { kind: 'choose' }
+  | { kind: 'running'; startedAt: number; encodedSec: number; bytes: number }
+  | { kind: 'done'; file: File; elapsedSec: number }
+  | { kind: 'error'; message: string };
+
+const FORMAT_LABEL = { mp4: 'MP4 (H.264 + AAC)', webm: 'WebM (VP9 + Opus)' } as const;
+const BTN = 'min-h-11 rounded-lg px-4 font-medium disabled:opacity-40';
+
+export function ExportDialog(props: Props) {
+  const { durationSec, onClose } = props;
+  const client = useMemo(() => new ExportClient(), []);
+  const [plans, setPlans] = useState<PresetPlan[]>([]);
+  const [preset, setPreset] = useState<Preset | null>(null);
+  const [phase, setPhase] = useState<Phase>({ kind: 'planning' });
+  const running = phase.kind === 'running';
+  const wakeLock = useWakeLock(running);
+  const startRef = useRef(0);
+
+  useEffect(() => () => client.dispose(), [client]);
+
+  useEffect(() => {
+    let alive = true;
+    void client.plan(props.sourceWidth, props.sourceHeight, props.fps).then((p) => {
+      if (!alive) return;
+      setPlans(p);
+      const usable = p.filter((x) => x.format && !x.upscale);
+      setPreset(usable[usable.length - 1]?.preset ?? null);
+      setPhase({ kind: 'choose' });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [client, props.sourceWidth, props.sourceHeight, props.fps]);
+
+  // Leaving the page would kill the export.
+  useEffect(() => {
+    if (!running) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [running]);
+
+  const chosen = plans.find((p) => p.preset === preset) ?? null;
+
+  const start = () => {
+    if (!chosen?.format) return;
+    const fileName = exportFileName(chosen.format.container);
+    startRef.current = performance.now();
+    setPhase({ kind: 'running', startedAt: startRef.current, encodedSec: 0, bytes: 0 });
+    client.start(
+      {
+        clips: props.clips,
+        width: chosen.width,
+        height: chosen.height,
+        format: chosen.format,
+        videoBitrate: chosen.videoBitrate,
+      },
+      fileName,
+      (e: ExportEvent) => {
+        if (e.type === 'progress') {
+          setPhase({
+            kind: 'running',
+            startedAt: startRef.current,
+            encodedSec: e.progress.encodedSec,
+            bytes: e.bytesWritten,
+          });
+        } else if (e.type === 'done') {
+          setPhase({
+            kind: 'done',
+            file: e.file,
+            elapsedSec: (performance.now() - startRef.current) / 1000,
+          });
+        } else if (e.type === 'cancelled') {
+          setPhase({ kind: 'choose' });
+        } else {
+          setPhase({ kind: 'error', message: e.message });
+        }
+      },
+    );
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Export video"
+      data-testid="export-dialog"
+    >
+      <div className="flex w-full max-w-md flex-col gap-4 rounded-t-2xl bg-neutral-900 p-5 sm:rounded-2xl">
+        <h2 className="text-lg font-semibold">Export video</h2>
+
+        {phase.kind === 'planning' && <p className="text-neutral-400">Checking encoders…</p>}
+
+        {phase.kind === 'choose' && (
+          <>
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-1 text-sm text-neutral-400">Quality</legend>
+              {plans.map((p) => {
+                const disabled = !p.format || p.upscale;
+                const note = !p.format
+                  ? "not supported by this device's encoder"
+                  : p.upscale
+                    ? 'source is smaller'
+                    : `${p.width}×${p.height} · ~${formatBytes(estimateBytes(p, durationSec))}`;
+                return (
+                  <label
+                    key={p.preset}
+                    className={`flex min-h-11 items-center gap-3 rounded-lg bg-neutral-800 px-3 ${disabled ? 'opacity-40' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="preset"
+                      value={p.preset}
+                      checked={preset === p.preset}
+                      disabled={disabled}
+                      onChange={() => setPreset(p.preset)}
+                      className="size-5"
+                    />
+                    <span className="font-medium">{p.preset}</span>
+                    <span className="ml-auto text-sm text-neutral-400">{note}</span>
+                  </label>
+                );
+              })}
+            </fieldset>
+
+            {chosen?.format && (
+              <p
+                className={`rounded p-2 text-sm ${chosen.format.container === 'mp4' ? 'bg-neutral-800 text-neutral-300' : 'bg-amber-950 text-amber-200'}`}
+                data-testid="export-format"
+              >
+                Format: {FORMAT_LABEL[chosen.format.container]}
+                {chosen.format.container === 'webm' &&
+                  ". This browser can't encode MP4 (no H.264/AAC encoder), so the video is saved as WebM. WebM may not open in the iOS Photos app."}
+              </p>
+            )}
+            {!plans.some((p) => p.format) && (
+              <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
+                This device cannot encode video in any supported format.
+              </p>
+            )}
+
+            <div className="flex gap-2">
+              <button type="button" className={`${BTN} bg-neutral-800`} onClick={onClose}>
+                Close
+              </button>
+              <button
+                type="button"
+                className={`${BTN} flex-1 bg-green-600 text-white active:bg-green-700`}
+                disabled={!chosen?.format}
+                onClick={start}
+                data-testid="export-start"
+              >
+                Export {formatDuration(durationSec)}
+              </button>
+            </div>
+          </>
+        )}
+
+        {phase.kind === 'running' && (
+          <RunningView
+            phase={phase}
+            durationSec={durationSec}
+            wakeLock={wakeLock}
+            onCancel={() => client.cancel()}
+          />
+        )}
+
+        {phase.kind === 'done' && (
+          <DoneView file={phase.file} elapsedSec={phase.elapsedSec} onClose={onClose} />
+        )}
+
+        {phase.kind === 'error' && (
+          <>
+            <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
+              Export failed: {phase.message}
+            </p>
+            <div className="flex gap-2">
+              <button type="button" className={`${BTN} bg-neutral-800`} onClick={onClose}>
+                Close
+              </button>
+              <button
+                type="button"
+                className={`${BTN} flex-1 bg-neutral-700`}
+                onClick={() => setPhase({ kind: 'choose' })}
+              >
+                Back
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function estimateBytes(p: PresetPlan, durationSec: number) {
+  return ((p.videoBitrate + AUDIO_BITRATE) * durationSec) / 8;
+}
+
+function RunningView({
+  phase,
+  durationSec,
+  wakeLock,
+  onCancel,
+}: {
+  phase: Extract<Phase, { kind: 'running' }>;
+  durationSec: number;
+  wakeLock: string;
+  onCancel: () => void;
+}) {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(performance.now()), 500);
+    return () => clearInterval(id);
+  }, []);
+  const fraction = durationSec > 0 ? Math.min(1, phase.encodedSec / durationSec) : 0;
+  const elapsed = (now - phase.startedAt) / 1000;
+  const eta = estimateRemainingSec(elapsed, fraction);
+
+  return (
+    <>
+      <div>
+        <div
+          className="h-3 w-full overflow-hidden rounded-full bg-neutral-800"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(fraction * 100)}
+          data-testid="export-progress"
+        >
+          <div
+            className="h-full bg-green-500 transition-[width]"
+            style={{ width: `${fraction * 100}%` }}
+          />
+        </div>
+        <p className="mt-2 flex justify-between font-mono text-sm tabular-nums text-neutral-300">
+          <span>{Math.round(fraction * 100)}%</span>
+          <span>{formatBytes(phase.bytes)}</span>
+          <span data-testid="export-eta">
+            {eta === null ? 'estimating…' : `${formatDuration(eta).replace(/\.\d$/, '')} left`}
+          </span>
+        </p>
+      </div>
+      <p className="rounded bg-amber-950 p-2 text-sm text-amber-200">
+        Keep this tab open and don&apos;t lock the screen until the export finishes.
+        {wakeLock === 'active'
+          ? ' The screen is being kept on.'
+          : wakeLock === 'unsupported'
+            ? " This browser can't keep the screen on automatically."
+            : ''}
+      </p>
+      <button
+        type="button"
+        className={`${BTN} bg-neutral-800 active:bg-neutral-700`}
+        onClick={onCancel}
+        data-testid="export-cancel"
+      >
+        Cancel
+      </button>
+    </>
+  );
+}
+
+function DoneView({
+  file,
+  elapsedSec,
+  onClose,
+}: {
+  file: File;
+  elapsedSec: number;
+  onClose: () => void;
+}) {
+  const url = useMemo(() => URL.createObjectURL(file), [file]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  const canShare =
+    typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+  const [shareError, setShareError] = useState<string | null>(null);
+
+  const share = async () => {
+    try {
+      await navigator.share({ files: [file], title: file.name });
+    } catch (err) {
+      // AbortError = the user closed the share sheet; not an error worth showing.
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        setShareError(err instanceof Error ? err.message : String(err));
+      }
+    }
+  };
+
+  return (
+    <>
+      <p className="text-neutral-300" data-testid="export-done">
+        Done: <span className="font-mono">{file.name}</span> · {formatBytes(file.size)} · encoded in{' '}
+        {formatDuration(elapsedSec).replace(/\.\d$/, '')}
+      </p>
+      {shareError && (
+        <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
+          Sharing failed: {shareError}. Use Download instead.
+        </p>
+      )}
+      <div className="flex flex-col gap-2">
+        {canShare && (
+          <button
+            type="button"
+            className={`${BTN} bg-green-600 text-white active:bg-green-700`}
+            onClick={() => void share()}
+          >
+            Share / Save to Photos
+          </button>
+        )}
+        <a
+          href={url}
+          download={file.name}
+          className={`${BTN} flex items-center justify-center ${canShare ? 'bg-neutral-800' : 'bg-green-600 text-white'}`}
+          data-testid="export-download"
+        >
+          Download
+        </a>
+        <button type="button" className={`${BTN} bg-neutral-800`} onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </>
+  );
+}

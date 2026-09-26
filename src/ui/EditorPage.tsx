@@ -5,6 +5,7 @@ import { DEFAULT_TEST_CLIP, parseTestClipSpec } from '../media/testClip';
 import { requestTestClip } from '../media/testClipClient';
 import { useMediaStore } from '../state/mediaStore';
 import { autoAddImportedMedia, useProjectStore } from '../state/projectStore';
+import { ExportDialog } from './export/ExportDialog';
 import { MediaCard } from './MediaCard';
 import { PreviewPanel } from './preview/PreviewPanel';
 import { Timeline } from './timeline/Timeline';
@@ -16,6 +17,7 @@ export function EditorPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [player, setPlayer] = useState<PreviewPlayer | null>(null);
   const [testClip, setTestClip] = useState<'idle' | 'encoding' | string>('idle');
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => autoAddImportedMedia(), []);
 
@@ -68,10 +70,40 @@ export function EditorPage() {
     <main className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-3 px-4 py-4">
       <header className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Video Editor</h1>
-        <a href="/debug" className="flex min-h-11 items-center text-sm text-neutral-400">
-          Device report
-        </a>
+        <div className="flex items-center gap-3">
+          <a href="/debug" className="flex min-h-11 items-center text-sm text-neutral-400">
+            Device report
+          </a>
+          <button
+            type="button"
+            disabled={!first}
+            onClick={() => {
+              player?.pause(); // free the decoder for the export
+              setExporting(true);
+            }}
+            className="min-h-11 rounded-lg bg-green-600 px-4 font-medium text-white active:bg-green-700 disabled:opacity-40"
+            data-testid="open-export"
+          >
+            Export
+          </button>
+        </div>
       </header>
+      {exporting && first && (
+        <ExportDialog
+          clips={sequence.map(({ mediaId, file, inSec, outSec, hasAudio }) => ({
+            mediaId,
+            file,
+            inSec,
+            outSec,
+            hasAudio,
+          }))}
+          durationSec={sequence.reduce((d, c) => d + c.outSec - c.inSec, 0)}
+          sourceWidth={first.displayWidth}
+          sourceHeight={first.displayHeight}
+          fps={first.frameRate ?? 30}
+          onClose={() => setExporting(false)}
+        />
+      )}
 
       {first ? (
         <>
