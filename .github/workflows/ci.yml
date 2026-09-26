@@ -1,9 +1,10 @@
 name: CI & Deploy
 
+# push covers PRs from this repo too (their checks attach to the same commit); a separate
+# pull_request trigger would run everything, including the deploy, twice.
 on:
   push:
     branches: ['**']
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -66,14 +67,12 @@ jobs:
     name: Deploy to Cloudflare Pages
     runs-on: ubuntu-latest
     needs: check
-    # Same-repo pushes only: fork PRs never see secrets.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
       deployments: write
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
-      BRANCH: ${{ github.head_ref || github.ref_name }}
+      BRANCH: ${{ github.ref_name }}
     steps:
       - name: Skip notice
         if: env.HAS_CLOUDFLARE != 'true'
