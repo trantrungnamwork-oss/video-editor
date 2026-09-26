@@ -92,6 +92,14 @@ export function DebugPage() {
         </div>
       </header>
 
+      <a
+        href="/bench"
+        className="mb-6 flex min-h-12 items-center justify-center rounded-lg bg-neutral-800 font-medium active:bg-neutral-700"
+        data-testid="open-bench"
+      >
+        Export benchmark →
+      </a>
+
       {error && <p className="rounded-lg bg-red-950 p-3 text-red-300">Detection failed: {error}</p>}
       {!report && !error && <p className="text-neutral-400">Probing device…</p>}
       {report && <ReportView report={report} />}

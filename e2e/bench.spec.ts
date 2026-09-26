@@ -23,3 +23,13 @@ test('benchmark page measures a re-encode and a lossless export', async ({ page 
     expect(r.peakMemoryBytes).toBeGreaterThan(0);
   }
 });
+
+test('the benchmark is reachable from the device report (no address bar in the installed app)', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Device report' }).click();
+  await page.getByTestId('open-bench').click();
+  await expect(page.getByRole('heading', { name: 'Export benchmark' })).toBeVisible();
+  await expect(page.getByTestId('bench-run')).toBeEnabled();
+});
