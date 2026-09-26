@@ -18,7 +18,9 @@ pnpm build        # static output in dist/, deploy to Cloudflare Pages
 Import clips (metadata and decodability are probed in a worker); they land on the timeline
 automatically. Scroll the timeline to scrub, pinch to zoom, tap a clip to select it, drag its
 yellow edges to trim or its ⠿ grip to reorder; split, delete and undo/redo are in the toolbar.
-**Export** encodes the timeline on the device (MP4 H.264/AAC, or WebM VP9/Opus where MP4 is not
+**Export → Original** copies the video without re-encoding (lossless, fast) when all cuts are on
+keyframes; the dialog offers to snap the cuts that aren't. Otherwise **Export** encodes the timeline
+on the device (MP4 H.264/AAC, or WebM VP9/Opus where MP4 is not
 available) at 720p or 1080p, then shares it (Save to Photos on phones) or downloads it. If the tab
 goes to the background the export pauses and resumes; if the tab is closed, the project is kept
 and the export can be resumed after re-selecting the videos.

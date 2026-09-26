@@ -1,6 +1,6 @@
 import { copyFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { finishExportAndDownload, openWithTestClips } from './helpers';
+import { finishExportAndDownload, openWithTestClips, startReencodeExport } from './helpers';
 import { expectFlashes, probeFile } from './verify';
 
 // Two 6 s test clips = 12 s = two 10 s export segments.
@@ -22,7 +22,7 @@ test('pauses on an interrupted segment and resumes by itself', async ({ page, br
   // Segment 1 fails once, as when the browser reclaims the encoder of a background tab.
   await openWithTestClips(page, 2, 6, '&exportfault=1');
   await page.getByTestId('open-export').click();
-  await page.getByTestId('export-start').click();
+  await startReencodeExport(page);
   // The paused state lasts under a second before auto-resume; watch every frame so it's not missed.
   await page.waitForFunction(
     () => !!document.querySelector('[data-testid="export-paused"]'),
@@ -42,7 +42,7 @@ test('resumes after the page is reloaded mid-export', async ({ page, browser }, 
   // A real file on disk, so it can be selected again after the reload with the same identity.
   await openWithTestClips(page, 2, 6);
   await page.getByTestId('open-export').click();
-  await page.getByTestId('export-start').click();
+  await startReencodeExport(page);
   const source = testInfo.outputPath('source.webm');
   await copyFile((await finishExportAndDownload(page)).path, source);
 
@@ -53,7 +53,7 @@ test('resumes after the page is reloaded mid-export', async ({ page, browser }, 
   await editor.getByTestId('file-input').setInputFiles(source);
   await expect(editor.getByTestId('timeline-clip')).toHaveCount(1, { timeout: 30_000 });
   await editor.getByTestId('open-export').click();
-  await editor.getByTestId('export-start').click();
+  await startReencodeExport(editor);
   // Past the first segment's checkpoint (audio 5 % + first video segment 45 %). Checked every
   // frame: the rest of the export can finish within a second, so a slow poll could miss it.
   await editor.waitForFunction(

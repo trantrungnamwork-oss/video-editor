@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExportClient, type ExportEvent } from '../../media/export/exportClient';
-import type { Checkpoint, ExportClip, ExportJob } from '../../media/export/exportPipeline';
+import type { CopyAnalysis, CopyClip, CopyJob, CutSnap } from '../../media/export/copyExport';
+import type { Checkpoint, ExportJob } from '../../media/export/exportPipeline';
 import {
   AUDIO_BITRATE,
   estimateRemainingSec,
@@ -12,15 +13,20 @@ import { formatBytes, formatDuration } from '../format';
 import { useWakeLock } from './useWakeLock';
 
 interface Props {
-  clips: ExportClip[];
+  clips: CopyClip[];
   durationSec: number;
   sourceWidth: number;
   sourceHeight: number;
   fps: number;
   /** Continue this unfinished export instead of starting a new one. */
   resumeFrom?: Checkpoint | null;
+  /** Applies keyframe snaps to the timeline (one undoable edit); the dialog then re-analyzes. */
+  onSnapCuts?: (snaps: CutSnap[]) => void;
   onClose: () => void;
 }
+
+type RunJob = { kind: 'encode'; job: ExportJob } | { kind: 'copy'; job: CopyJob };
+type Choice = Preset | 'original';
 
 type Phase =
   | { kind: 'planning' }
@@ -47,7 +53,14 @@ export function ExportDialog(props: Props) {
   const { durationSec, onClose, resumeFrom } = props;
   const client = useMemo(() => new ExportClient(), []);
   const [plans, setPlans] = useState<PresetPlan[]>([]);
-  const [preset, setPreset] = useState<Preset | null>(null);
+  const [preset, setPreset] = useState<Choice | null>(null);
+  const [analysis, setAnalysis] = useState<CopyAnalysis | null>(null);
+  /** Once the user picks an option, late results (analysis) must not override it. */
+  const userChose = useRef(false);
+  const choose = (c: Choice) => {
+    userChose.current = true;
+    setPreset(c);
+  };
   const [phase, setPhase] = useState<Phase>(() =>
     resumeFrom
       ? {
@@ -61,7 +74,7 @@ export function ExportDialog(props: Props) {
   );
   const busy = phase.kind === 'running' || phase.kind === 'paused';
   const wakeLock = useWakeLock(busy);
-  const jobRef = useRef<ExportJob | null>(null);
+  const jobRef = useRef<RunJob | null>(null);
   const startedAtRef = useRef(0);
   const stalls = useRef({ count: 0, lastFraction: -1 });
 
@@ -69,50 +82,53 @@ export function ExportDialog(props: Props) {
 
   /** Starts the worker; the caller has already put the dialog in the running phase. */
   const launch = useCallback(
-    (job: ExportJob, resume: boolean) => {
-      jobRef.current = job;
+    (run: RunJob, resume: boolean) => {
+      jobRef.current = run;
       const fault = faultAtSegment();
-      client.start(
-        job,
-        (e: ExportEvent) => {
-          if (e.type === 'progress') {
-            setPhase((p) =>
-              p.kind === 'running'
-                ? { ...p, fraction: e.progress.fraction, bytes: e.bytesWritten }
-                : p,
-            );
-          } else if (e.type === 'done') {
-            setPhase({
-              kind: 'done',
-              file: e.file,
-              elapsedSec: (performance.now() - startedAtRef.current) / 1000,
-            });
-          } else if (e.type === 'interrupted') {
-            const s = stalls.current;
-            s.count = e.fraction > s.lastFraction + 1e-6 ? 1 : s.count + 1;
-            s.lastFraction = e.fraction;
-            setPhase(
-              s.count > MAX_STALLED_RETRIES
-                ? {
-                    kind: 'error',
-                    message: `${e.message} (gave up after ${MAX_STALLED_RETRIES} retries)`,
-                  }
-                : { kind: 'paused', fraction: e.fraction, message: e.message },
-            );
-          } else if (e.type === 'cancelled') {
-            setPhase({ kind: 'choose' });
-          } else {
-            setPhase({ kind: 'error', message: e.message });
-          }
-        },
-        { resume, ...(fault !== undefined ? { faultAtSegment: fault } : {}) },
-      );
+      const onEvent = (e: ExportEvent) => {
+        if (e.type === 'progress') {
+          setPhase((p) =>
+            p.kind === 'running'
+              ? { ...p, fraction: e.progress.fraction, bytes: e.bytesWritten }
+              : p,
+          );
+        } else if (e.type === 'done') {
+          setPhase({
+            kind: 'done',
+            file: e.file,
+            elapsedSec: (performance.now() - startedAtRef.current) / 1000,
+          });
+        } else if (e.type === 'interrupted') {
+          const s = stalls.current;
+          s.count = e.fraction > s.lastFraction + 1e-6 ? 1 : s.count + 1;
+          s.lastFraction = e.fraction;
+          setPhase(
+            s.count > MAX_STALLED_RETRIES
+              ? {
+                  kind: 'error',
+                  message: `${e.message} (gave up after ${MAX_STALLED_RETRIES} retries)`,
+                }
+              : { kind: 'paused', fraction: e.fraction, message: e.message },
+          );
+        } else if (e.type === 'cancelled') {
+          setPhase({ kind: 'choose' });
+        } else {
+          setPhase({ kind: 'error', message: e.message });
+        }
+      };
+      if (run.kind === 'copy') client.startCopy(run.job, onEvent);
+      else {
+        client.start(run.job, onEvent, {
+          resume,
+          ...(fault !== undefined ? { faultAtSegment: fault } : {}),
+        });
+      }
     },
     [client],
   );
 
   const run = useCallback(
-    (job: ExportJob, resume: boolean, fromFraction: number) => {
+    (job: RunJob, resume: boolean, fromFraction: number) => {
       const startedAt = performance.now();
       if (!resume) startedAtRef.current = startedAt;
       setPhase({
@@ -151,7 +167,7 @@ export function ExportDialog(props: Props) {
     if (resumeFrom) {
       stalls.current = { count: 0, lastFraction: resumedFraction(resumeFrom) };
       startedAtRef.current = performance.now();
-      launch({ ...resumeFrom.settings, clips: props.clips }, true);
+      launch({ kind: 'encode', job: { ...resumeFrom.settings, clips: props.clips } }, true);
       return;
     }
     let alive = true;
@@ -159,7 +175,7 @@ export function ExportDialog(props: Props) {
       if (!alive) return;
       setPlans(p);
       const usable = p.filter((x) => x.format && !x.upscale);
-      setPreset(usable[usable.length - 1]?.preset ?? null);
+      setPreset((prev) => prev ?? usable[usable.length - 1]?.preset ?? null);
       setPhase({ kind: 'choose' });
     });
     return () => {
@@ -168,6 +184,25 @@ export function ExportDialog(props: Props) {
     // Planning depends only on the source; the clip list is read when starting.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, resumeFrom, launch, props.sourceWidth, props.sourceHeight, props.fps]);
+
+  // Smart cut: can this exact timeline be exported without re-encoding? Re-run after every edit
+  // (e.g. after snapping cuts to keyframes).
+  const clipsKey = props.clips.map((c) => `${c.clipId}:${c.inSec}:${c.outSec}`).join('|');
+  useEffect(() => {
+    if (resumeFrom) return;
+    let alive = true;
+    void client.analyzeCopy(props.clips).then((a) => {
+      if (!alive) return;
+      setAnalysis(a);
+      // Lossless and fast: the best default, unless the user already chose.
+      if (a.eligible && !userChose.current) setPreset('original');
+    });
+    return () => {
+      alive = false;
+    };
+    // clipsKey captures every clip change that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, clipsKey, resumeFrom]);
 
   // Leaving the page would stop the export (it can be resumed after reopening, but warn anyway).
   useEffect(() => {
@@ -178,18 +213,40 @@ export function ExportDialog(props: Props) {
   }, [busy]);
 
   const chosen = plans.find((p) => p.preset === preset) ?? null;
+  const original = preset === 'original' && analysis?.eligible ? analysis : null;
+  const canStart = !!original || !!chosen?.format;
 
   const start = () => {
-    if (!chosen?.format) return;
     stalls.current = { count: 0, lastFraction: 0 };
+    if (original) {
+      run(
+        {
+          kind: 'copy',
+          job: {
+            clips: props.clips,
+            container: original.container,
+            videoCodec: original.videoCodec,
+            rotation: original.rotation,
+            fileName: exportFileName(original.container),
+          },
+        },
+        false,
+        0,
+      );
+      return;
+    }
+    if (!chosen?.format) return;
     run(
       {
-        clips: props.clips,
-        width: chosen.width,
-        height: chosen.height,
-        format: chosen.format,
-        videoBitrate: chosen.videoBitrate,
-        fileName: exportFileName(chosen.format.container),
+        kind: 'encode',
+        job: {
+          clips: props.clips,
+          width: chosen.width,
+          height: chosen.height,
+          format: chosen.format,
+          videoBitrate: chosen.videoBitrate,
+          fileName: exportFileName(chosen.format.container),
+        },
       },
       false,
       0,
@@ -213,6 +270,12 @@ export function ExportDialog(props: Props) {
           <>
             <fieldset className="flex flex-col gap-2">
               <legend className="mb-1 text-sm text-neutral-400">Quality</legend>
+              <OriginalOption
+                analysis={analysis}
+                checked={preset === 'original'}
+                onChoose={() => choose('original')}
+                onSnap={props.onSnapCuts}
+              />
               {plans.map((p) => {
                 const disabled = !p.format || p.upscale;
                 const note = !p.format
@@ -231,7 +294,7 @@ export function ExportDialog(props: Props) {
                       value={p.preset}
                       checked={preset === p.preset}
                       disabled={disabled}
-                      onChange={() => setPreset(p.preset)}
+                      onChange={() => choose(p.preset)}
                       className="size-5"
                     />
                     <span className="font-medium">{p.preset}</span>
@@ -241,7 +304,18 @@ export function ExportDialog(props: Props) {
               })}
             </fieldset>
 
-            {chosen?.format && (
+            {original && (
+              <p
+                className="rounded bg-neutral-800 p-2 text-sm text-neutral-300"
+                data-testid="export-format"
+              >
+                Format: {original.container.toUpperCase()} ({original.videoCodec.toUpperCase()}{' '}
+                copied as recorded
+                {original.audioCodec ? ` + ${original.audioCodec.toUpperCase()}` : ''}). No quality
+                loss and much faster, because the video isn&apos;t re-encoded.
+              </p>
+            )}
+            {!original && chosen?.format && (
               <p
                 className={`rounded p-2 text-sm ${chosen.format.container === 'mp4' ? 'bg-neutral-800 text-neutral-300' : 'bg-amber-950 text-amber-200'}`}
                 data-testid="export-format"
@@ -251,7 +325,7 @@ export function ExportDialog(props: Props) {
                   ". This browser can't encode MP4 (no H.264/AAC encoder), so the video is saved as WebM. WebM may not open in the iOS Photos app."}
               </p>
             )}
-            {!plans.some((p) => p.format) && (
+            {!original && !plans.some((p) => p.format) && (
               <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
                 This device cannot encode video in any supported format.
               </p>
@@ -264,7 +338,7 @@ export function ExportDialog(props: Props) {
               <button
                 type="button"
                 className={`${BTN} flex-1 bg-green-600 text-white active:bg-green-700`}
-                disabled={!chosen?.format}
+                disabled={!canStart}
                 onClick={start}
                 data-testid="export-start"
               >
@@ -312,6 +386,58 @@ export function ExportDialog(props: Props) {
 function resumedFraction(cp: Checkpoint): number {
   if (cp.segmentCount <= 0) return 0;
   return (0.9 * cp.segmentsDone) / cp.segmentCount + (cp.audioDone ? 0.05 : 0);
+}
+
+/** "Original": lossless smart-cut export, or why it isn't available and how to enable it. */
+function OriginalOption({
+  analysis,
+  checked,
+  onChoose,
+  onSnap,
+}: {
+  analysis: CopyAnalysis | null;
+  checked: boolean;
+  onChoose: () => void;
+  onSnap: ((snaps: CutSnap[]) => void) | undefined;
+}) {
+  const eligible = analysis?.eligible === true;
+  const note = !analysis
+    ? 'checking…'
+    : analysis.eligible
+      ? `${analysis.width}×${analysis.height} · lossless · fast`
+      : analysis.reason;
+  const snaps = analysis && !analysis.eligible ? analysis.snaps : [];
+  const maxShift = Math.max(0, ...snaps.map((s) => s.shiftSec));
+  return (
+    <div className="flex flex-col gap-1" data-testid="export-original">
+      <label
+        className={`flex min-h-11 items-center gap-3 rounded-lg bg-neutral-800 px-3 py-2 ${eligible ? '' : 'opacity-60'}`}
+      >
+        <input
+          type="radio"
+          name="preset"
+          value="original"
+          checked={checked && eligible}
+          disabled={!eligible}
+          onChange={onChoose}
+          className="size-5"
+        />
+        <span className="font-medium">Original</span>
+        <span className="ml-auto text-right text-sm text-neutral-400">{note}</span>
+      </label>
+      {snaps.length > 0 && onSnap && (
+        <button
+          type="button"
+          className="min-h-11 rounded-lg bg-neutral-700 px-3 text-left text-sm active:bg-neutral-600"
+          onClick={() => onSnap(snaps)}
+          data-testid="snap-cuts"
+        >
+          Snap {snaps.length} cut{snaps.length > 1 ? 's' : ''} to keyframes for a lossless export
+          (moves {snaps.length > 1 ? 'them' : 'it'} by up to {maxShift.toFixed(2)} s)
+        </button>
+      )}
+    </div>
+  );
 }
 
 function estimateBytes(p: PresetPlan, durationSec: number) {

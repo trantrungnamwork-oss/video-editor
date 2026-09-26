@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Checkpoint, ExportClip } from '../media/export/exportPipeline';
+import type { CopyClip } from '../media/export/copyExport';
+import type { Checkpoint } from '../media/export/exportPipeline';
 import { discardPendingExport, readPendingCheckpoint } from '../media/export/opfsFile';
 import { identityOf, jobKey } from '../media/export/segments';
 import type { PreviewPlayer } from '../media/preview/previewPlayer';
@@ -73,9 +74,10 @@ export function EditorPage() {
   // Export needs every clip's file; after a reload some may still be waiting for relink.
   const complete = project.clips.length > 0 && sequence.length === project.clips.length;
 
-  const exportClips = useMemo<ExportClip[]>(
+  const exportClips = useMemo<CopyClip[]>(
     () =>
-      sequence.map(({ mediaId, file, inSec, outSec, hasAudio }) => ({
+      sequence.map(({ id, mediaId, file, inSec, outSec, hasAudio }) => ({
+        clipId: id,
         mediaId,
         file,
         inSec,
@@ -135,6 +137,7 @@ export function EditorPage() {
           sourceHeight={first.displayHeight}
           fps={first.frameRate ?? 30}
           resumeFrom={exporting === 'resume' ? pending : null}
+          onSnapCuts={(snaps) => useProjectStore.getState().setCuts(snaps)}
           onClose={() => {
             setExporting(false);
             refreshPending();

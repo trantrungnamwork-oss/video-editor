@@ -29,6 +29,10 @@ export interface SyntheticOptions {
   variableFrameRate?: boolean;
   /** Payload size per video packet, to build files large enough for I/O tests. */
   videoPacketBytes?: number;
+  /** Keyframe every N frames (default: one per second). */
+  gop?: number;
+  /** Emit frame pairs in swapped decode order, like B-frames (presentation reordering). */
+  reorder?: boolean;
 }
 
 // Minimal but structurally valid codec-private records.
@@ -57,6 +61,8 @@ export async function createSyntheticVideo(opts: SyntheticOptions): Promise<Uint
     rotation = 0,
     variableFrameRate = false,
     videoPacketBytes = 5,
+    gop = fps,
+    reorder = false,
   } = opts;
 
   const format = {
@@ -79,16 +85,32 @@ export async function createSyntheticVideo(opts: SyntheticOptions): Promise<Uint
 
   const description = video === 'avc' ? AVCC : video === 'hevc' ? HVCC : undefined;
   const frameCount = Math.round(durationSec * fps);
+  const frames: { pts: number; dur: number; key: boolean; index: number }[] = [];
   let t = 0;
   for (let i = 0; i < frameCount; i++) {
     // Irregular, non-lattice spacing so no underlying constant rate can be fitted.
     const dur = variableFrameRate ? (1 + 0.45 * Math.sin(i * 1.37)) / fps : 1 / fps;
-    const payload = new Uint8Array(videoPacketBytes);
-    payload[payload.length - 1] = i & 0xff;
-    const packet = new EncodedPacket(payload, i % fps === 0 ? 'key' : 'delta', t, dur);
+    frames.push({ pts: t, dur, key: i % gop === 0, index: i });
+    t += dur;
+  }
+  // Decode order: with `reorder`, each pair of delta frames is stored later-first (P before B).
+  const decodeOrder = [...frames];
+  if (reorder) {
+    for (let i = 1; i + 1 < decodeOrder.length; i += 2) {
+      const a = decodeOrder[i];
+      const b = decodeOrder[i + 1];
+      if (a && b && !a.key && !b.key) [decodeOrder[i], decodeOrder[i + 1]] = [b, a];
+    }
+  }
+  for (const [n, f] of decodeOrder.entries()) {
+    // Payload encodes the frame index so tests can check bytes survive a stream copy.
+    const payload = new Uint8Array(Math.max(videoPacketBytes, 2));
+    payload[0] = f.index >> 8;
+    payload[1] = f.index & 0xff;
+    const packet = new EncodedPacket(payload, f.key ? 'key' : 'delta', f.pts, f.dur);
     await videoSource.add(
       packet,
-      i === 0
+      n === 0
         ? {
             decoderConfig: {
               codec: VIDEO_CODEC_STRING[video],
@@ -99,7 +121,6 @@ export async function createSyntheticVideo(opts: SyntheticOptions): Promise<Uint
           }
         : undefined,
     );
-    t += dur;
   }
 
   if (audioSource) {

@@ -79,3 +79,12 @@ export async function finishExportAndDownload(page: Page) {
   if (!path) throw new Error('download has no path');
   return { name: download.suggestedFilename(), path };
 }
+
+/** In an open export dialog: waits for the smart-cut analysis, then picks a re-encode preset. */
+export async function startReencodeExport(page: Page, preset: '720p' | '1080p' = '720p') {
+  await expect(page.getByTestId('export-original')).not.toContainText('checking', {
+    timeout: 30_000,
+  });
+  await page.getByLabel(preset).check();
+  await page.getByTestId('export-start').click();
+}

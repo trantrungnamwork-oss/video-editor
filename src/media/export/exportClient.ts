@@ -1,3 +1,4 @@
+import type { CopyAnalysis, CopyClip, CopyJob } from './copyExport';
 import type { ExportJob, ExportProgress } from './exportPipeline';
 import type { PresetPlan } from './plan';
 import type { FromExportWorker, ToExportWorker } from './protocol';
@@ -16,6 +17,7 @@ export class ExportClient {
   });
   private nextId = 0;
   private readonly plans = new Map<number, (p: PresetPlan[]) => void>();
+  private readonly analyses = new Map<number, (a: CopyAnalysis) => void>();
   private listener: ((e: ExportEvent) => void) | null = null;
 
   constructor() {
@@ -24,6 +26,9 @@ export class ExportClient {
       if (msg.type === 'plan') {
         this.plans.get(msg.id)?.(msg.plans);
         this.plans.delete(msg.id);
+      } else if (msg.type === 'analysis') {
+        this.analyses.get(msg.id)?.(msg.analysis);
+        this.analyses.delete(msg.id);
       } else {
         this.listener?.(msg);
       }
@@ -53,6 +58,20 @@ export class ExportClient {
       resume: opts.resume ?? false,
       ...(opts.faultAtSegment !== undefined ? { faultAtSegment: opts.faultAtSegment } : {}),
     });
+  }
+
+  /** Can this timeline be exported losslessly by stream copy (smart cut)? */
+  analyzeCopy(clips: CopyClip[]): Promise<CopyAnalysis> {
+    const id = this.nextId++;
+    return new Promise((resolve) => {
+      this.analyses.set(id, resolve);
+      this.send({ type: 'analyze-copy', id, clips });
+    });
+  }
+
+  startCopy(job: CopyJob, listener: (e: ExportEvent) => void): void {
+    this.listener = listener;
+    this.send({ type: 'start-copy', job });
   }
 
   cancel(): void {

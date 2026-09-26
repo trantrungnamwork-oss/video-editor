@@ -1,5 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
-import { finishExportAndDownload, openWithTestClips, scrubTo } from './helpers';
+import {
+  finishExportAndDownload,
+  openWithTestClips,
+  scrubTo,
+  startReencodeExport,
+} from './helpers';
 import { expectFlashes, probeFile } from './verify';
 
 const CLIP_SEC = 3;
@@ -38,8 +43,12 @@ test('exports the edited timeline with the right content', async ({ page, browse
 
   await page.getByTestId('open-export').click();
   const format = await expectedFormat(page);
-  await expect(page.getByTestId('export-format')).toContainText(format === 'mp4' ? 'MP4' : 'WebM');
   await expect(page.getByLabel('1080p')).toBeDisabled(); // 720p sources are never upscaled
+  await expect(page.getByTestId('export-original')).not.toContainText('checking', {
+    timeout: 30_000,
+  });
+  await page.getByLabel('720p').check();
+  await expect(page.getByTestId('export-format')).toContainText(format === 'mp4' ? 'MP4' : 'WebM');
   await page.getByTestId('export-start').click();
   await expect(page.getByTestId('export-progress')).toBeVisible();
   const out = await finishExportAndDownload(page);
@@ -67,7 +76,7 @@ test('exports the edited timeline with the right content', async ({ page, browse
 test('cancels an export and cleans up the partial files', async ({ page }) => {
   await openWithTestClips(page, 2, 6);
   await page.getByTestId('open-export').click();
-  await page.getByTestId('export-start').click();
+  await startReencodeExport(page);
   await expect
     .poll(async () =>
       Number(await page.getByTestId('export-progress').getAttribute('aria-valuenow')),

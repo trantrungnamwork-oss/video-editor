@@ -28,6 +28,8 @@ export interface ProjectState {
   removeMedia(mediaId: string): void;
   undo(): void;
   redo(): void;
+  /** Moves cut points (e.g. onto keyframes) as one undoable edit. */
+  setCuts(cuts: { clipId: string; inSec?: number; outSec?: number }[]): void;
   /** Replaces the project (e.g. restored after a reload); history starts fresh. */
   restore(project: Project): void;
 }
@@ -69,6 +71,15 @@ export function createProjectStore() {
         set((s) => ({ history: redo(s.history) }));
         get().select(validSelection(get()));
       },
+      setCuts: (cuts) =>
+        edit((p) =>
+          cuts.reduce((q, c) => {
+            let next = q;
+            if (c.inSec !== undefined) next = trimIn(next, c.clipId, c.inSec);
+            if (c.outSec !== undefined) next = trimOut(next, c.clipId, c.outSec);
+            return next;
+          }, p),
+        ),
       restore: (project) => set({ history: createHistory(project), selectedClipId: null }),
     };
   });

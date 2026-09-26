@@ -1,5 +1,8 @@
 import { canEncodeAudio, canEncodeVideo } from 'mediabunny';
+import { analyzeCopy, runCopyExport, type CopyJob } from '../media/export/copyExport';
 import {
+  audioSource,
+  encodeAudio,
   ExportCancelled,
   ExportInterrupted,
   runExport,
@@ -53,6 +56,20 @@ self.onmessage = (e: MessageEvent<ToExportWorker>) => {
     case 'start':
       void start(msg.job, msg.resume, msg.faultAtSegment);
       return;
+    case 'analyze-copy':
+      void analyzeCopy(msg.clips, audioEncodable).then(
+        (analysis) => post({ type: 'analysis', id: msg.id, analysis }),
+        (err: unknown) =>
+          post({
+            type: 'analysis',
+            id: msg.id,
+            analysis: { eligible: false, reason: String(err), snaps: [] },
+          }),
+      );
+      return;
+    case 'start-copy':
+      void startCopy(msg.job);
+      return;
     case 'cancel':
       abort?.abort();
       return;
@@ -97,6 +114,65 @@ async function start(job: ExportJob, resume: boolean, faultAtSegment: number | u
       await store.clear();
       post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
+  } finally {
+    if (abort === controller) abort = null;
+  }
+}
+
+const audioEncodable = (codec: 'aac' | 'opus') =>
+  canEncodeAudio(codec, {
+    sampleRate: AUDIO_SAMPLE_RATE,
+    numberOfChannels: AUDIO_CHANNELS,
+    bitrate: AUDIO_BITRATE,
+  });
+
+async function startCopy(job: CopyJob) {
+  abort?.abort();
+  const controller = new AbortController();
+  abort = controller;
+  let writer: Awaited<ReturnType<typeof openOpfsWriter>> | null = null;
+  try {
+    await clearFinishedExports();
+    writer = await openOpfsWriter(await exportDir(), job.fileName);
+    const withAudio = job.clips.some((c) => c.hasAudio);
+    const audio = withAudio ? audioSource(job.container === 'mp4' ? 'aac' : 'opus') : null;
+    const check = () => {
+      if (controller.signal.aborted) throw new ExportCancelled();
+    };
+    let lastPost = 0;
+    await runCopyExport(job, writer.stream, {
+      signal: controller.signal,
+      onProgress: (fraction) => {
+        const now = performance.now();
+        if (now - lastPost < PROGRESS_INTERVAL_MS) return;
+        lastPost = now;
+        post({
+          type: 'progress',
+          progress: { fraction, phase: 'video' },
+          bytesWritten: writer?.bytesWritten ?? 0,
+        });
+      },
+      ...(audio
+        ? {
+            audio: {
+              source: audio,
+              encode: (seq) => encodeAudio(seq, audio, check, () => undefined),
+            },
+          }
+        : {}),
+    });
+    const file = await writer.file();
+    post({ type: 'done', file: new File([file], job.fileName, { type: mimeOf(job.fileName) }) });
+  } catch (err) {
+    await writer?.remove();
+    if (controller.signal.aborted) post({ type: 'cancelled' });
+    // Nothing to resume: a copy is fast, so an interruption simply restarts it.
+    else
+      post({
+        type: 'interrupted',
+        fraction: 0,
+        message: err instanceof Error ? err.message : String(err),
+      });
   } finally {
     if (abort === controller) abort = null;
   }

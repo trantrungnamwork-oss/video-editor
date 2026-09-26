@@ -324,11 +324,7 @@ async function encodeAudioFile(
   check: () => void,
   progress: (f: number) => void,
 ) {
-  const source = new AudioSampleSource({
-    codec: job.format.audio,
-    bitrate: AUDIO_BITRATE,
-    transform: { sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
-  });
+  const source = audioSource(job.format.audio);
   const total = seq[seq.length - 1]?.endSec ?? 0;
   await withOutput(
     store,
@@ -339,7 +335,17 @@ async function encodeAudioFile(
   );
 }
 
-async function encodeAudio(
+/** Audio encoder source used by every export path (48 kHz stereo, resampled as needed). */
+export function audioSource(codec: 'aac' | 'opus'): AudioSampleSource {
+  return new AudioSampleSource({
+    codec,
+    bitrate: AUDIO_BITRATE,
+    transform: { sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
+  });
+}
+
+/** Decodes the timeline's audio (silence for gaps) into `source`, retimed to the timeline. */
+export async function encodeAudio(
   seq: ScheduledClip[],
   source: AudioSampleSource,
   check: () => void,

@@ -78,3 +78,29 @@ Format: see CLAUDE.md §8.
 - **Decision (2026-09-26): option 1.** Implemented as segmented export with checkpoints plus
   project persistence and file relinking; see ADR 0007. The same mechanism fixes exports failing
   when the tab goes to the background (codecs reclaimed): they now pause and resume.
+
+## TL-005: Re-encoding only the partial GOPs (mixed copy + re-encode)
+
+- Affected platforms: all (H.264/HEVC in MP4 in particular)
+- Severity: Medium
+- User impact: smart cut is lossless only when every cut lands on a keyframe (or the user accepts
+  snapping). A single cut in the middle of a GOP means the whole timeline is re-encoded, instead
+  of re-encoding just that GOP as CLAUDE.md §6.5 describes.
+- Why: an MP4 track has one sample description. Frames re-encoded by WebCodecs come with the
+  browser encoder's own SPS/PPS (avcC/hvcC), which differ from the camera's; WebCodecs gives no
+  control over them. Copied and re-encoded frames therefore can't share one track, and players
+  (including iOS Photos) mis-decode files that switch parameter sets without signalling it.
+  VP9 in WebM doesn't have this problem (frames are self-describing), but iPhone/Android
+  recordings are H.264/HEVC.
+- Options:
+  1. Keep all-or-nothing copy + "snap to keyframes" (implemented). + robust, simple,
+     universally playable; − an off-keyframe cut costs a full re-encode (or a small shift).
+  2. Write `avc3`/`hev1` sample entries with parameter sets in-band, so each GOP may carry its own
+     SPS/PPS. Needs changes to Mediabunny's muxer (MPL-2.0: the patched files must stay MPL and be
+     published) or our own MP4 writer. + true partial re-encode; − playback support for
+     in-band parameter changes is uneven (older iOS/QuickTime, some Android players); significant
+     work and a compatibility risk in exactly the files users share.
+  3. Partial re-encode only for VP9/WebM sources. + works where the format allows; − covers
+     almost no phone footage, and WebM doesn't open in iOS Photos.
+- Proposal: option 1 for the MVP. Revisit option 2 after the MVP with a device compatibility
+  matrix (iOS Photos, Android Gallery, WhatsApp/Zalo re-encoders).
