@@ -11,7 +11,7 @@ const WARNING_LABELS: Record<Exclude<MediaWarning, 'video-undecodable'>, string>
 };
 
 const ERROR_LABELS = {
-  'unsupported-format': 'Unsupported file format.',
+  'unsupported-format': 'Unsupported file format (supported: MP4, MOV, WebM, MKV, MPEG-TS).',
   'no-video-track': 'This file has no video track.',
   'read-failed': 'Could not read this file.',
 } as const;

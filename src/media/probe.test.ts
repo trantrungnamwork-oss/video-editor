@@ -44,6 +44,13 @@ describe('probeMedia', () => {
     expect(info.audio?.codec).toBe('opus');
   });
 
+  it('accepts MPEG-TS containers (.ts/.mts/.m2ts)', async () => {
+    // Demuxing is Mediabunny's (tested upstream); a synthetic TS would need real H.264 slices.
+    const { SUPPORTED_INPUT_FORMATS } = await import('./probe');
+    const { MPEG_TS } = await import('mediabunny');
+    expect(SUPPORTED_INPUT_FORMATS).toContain(MPEG_TS);
+  });
+
   it('swaps display dimensions for rotated portrait video', async () => {
     const info = await probe({ container: 'mp4', video: 'avc', rotation: 90 });
     expect(info.video).toMatchObject({

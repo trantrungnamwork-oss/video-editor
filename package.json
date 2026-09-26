@@ -15,7 +15,9 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "bench": "node scripts/bench.mjs",
+    "icons": "node scripts/gen-icons.mjs"
   },
   "dependencies": {
     "mediabunny": "^1.60.0",

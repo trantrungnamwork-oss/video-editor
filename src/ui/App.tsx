@@ -1,3 +1,4 @@
+import { BenchPage } from './BenchPage';
 import { DebugPage } from './DebugPage';
 import { EditorPage } from './EditorPage';
 
@@ -5,5 +6,6 @@ import { EditorPage } from './EditorPage';
 export function App() {
   const path = window.location.pathname.replace(/\/+$/, '');
   if (path === '/debug') return <DebugPage />;
+  if (path === '/bench') return <BenchPage />;
   return <EditorPage />;
 }

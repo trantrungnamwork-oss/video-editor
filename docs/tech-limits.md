@@ -105,3 +105,28 @@ Format: see CLAUDE.md §8.
 - Proposal: option 1 for the MVP. Revisit option 2 after the MVP with a device compatibility
   matrix (iOS Photos, Android Gallery, WhatsApp/Zalo re-encoders).
 - **Decision (2026-09-26): option 1.**
+
+## TL-006: FFmpeg.wasm fallback conflicts with the no-GPL rule
+
+- Affected platforms: all (only matters for unusual input formats)
+- Severity: Medium
+- User impact: files outside MP4/MOV/WebM/MKV/MPEG-TS (e.g. AVI, FLV, WMV, old 3GP/MPEG-4 Part 2)
+  or codecs the device can't decode are refused with a clear message instead of converted.
+- Facts:
+  - CLAUDE.md §3.3 asks for FFmpeg.wasm as a lazy fallback; §3.7 forbids bundling GPL codecs
+    (x264, x265) and requires MIT-compatible dependencies.
+  - The published `@ffmpeg/core` is **GPL-2.0-or-later** (it contains x264/x265) and is ~64 MB
+    unpacked (~30 MB wasm). Cloudflare Pages caps a single file at 25 MiB.
+  - Mediabunny already covers the containers phones and cameras produce, now including MPEG-TS
+    (.ts/.mts/.m2ts; enabled in M6, not yet checked with a real camcorder file).
+- Options:
+  1. Custom LGPL build of ffmpeg.wasm (`--disable-gpl`, no x264/x265; native decoders +
+     libvpx/opus), used to demux/decode unusual inputs and hand frames or a VP9/Opus intermediate
+     to our pipeline; lazy-loaded, wasm split under 25 MiB or served from R2. + covers exotic
+     formats legally; − building and maintaining an emscripten toolchain in CI, 20–30 MB
+     download on first use, slow on phones, LGPL compliance (publish our build scripts).
+  2. No FFmpeg: rely on Mediabunny's formats (done), refuse the rest with a clear message.
+     - zero cost, no licensing risk; − no AVI/FLV/WMV/MPEG-4 Part 2.
+  3. Stock `@ffmpeg/core` — **not allowed** (GPL).
+- Proposal: option 2 for the MVP (phone and camera footage is covered). Build option 1 only if
+  users actually bring such files; the refusal message lists the supported formats.

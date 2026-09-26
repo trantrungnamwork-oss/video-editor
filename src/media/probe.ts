@@ -10,6 +10,7 @@ import {
   Input,
   MATROSKA,
   MP4,
+  MPEG_TS,
   QTFF,
   WEBM,
   type InputAudioTrack,
@@ -17,8 +18,12 @@ import {
 } from 'mediabunny';
 import { probeConfig, PROBE_TIMEOUT_MS, type ConfigProber, type ProbeResult } from './capabilities';
 
-/** Containers the WebCodecs pipeline handles. Anything else is a job for the FFmpeg.wasm fallback. */
-export const SUPPORTED_INPUT_FORMATS = [MP4, QTFF, WEBM, MATROSKA];
+/**
+ * Containers the WebCodecs pipeline handles: MP4/MOV (phones), WebM/MKV, and MPEG-TS
+ * (.ts/.mts/.m2ts from camcorders and some apps). Anything else is refused with a clear message;
+ * see TL-006 for why there is no FFmpeg.wasm fallback.
+ */
+export const SUPPORTED_INPUT_FORMATS = [MP4, QTFF, WEBM, MATROSKA, MPEG_TS];
 
 /** Enough to cover a moov/cues lookup without holding large chunks of the file. */
 const SOURCE_CACHE_BYTES = 4 * 1024 * 1024;
