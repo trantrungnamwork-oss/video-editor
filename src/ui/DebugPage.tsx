@@ -7,6 +7,7 @@ import {
   type ProbeStatus,
   type Resolution,
 } from '../media/capabilities';
+import { formatBytes } from './format';
 
 const STATUS_STYLE: Record<ProbeStatus, { label: string; className: string }> = {
   supported: { label: '✓', className: 'text-green-400' },
@@ -200,11 +201,6 @@ function Status({ result }: { result: ProbeResult }) {
       {label}
     </span>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
-  return `${(n / 1e6).toFixed(0)} MB`;
 }
 
 async function copyText(text: string): Promise<boolean> {

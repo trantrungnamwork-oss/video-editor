@@ -42,7 +42,8 @@ export default defineConfig({
   preview: { headers: isolationHeaders },
   worker: { format: 'es' },
   test: {
-    environment: 'jsdom',
+    // Media code runs against Node's Blob/File; opt into jsdom per file with @vitest-environment.
+    environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 });

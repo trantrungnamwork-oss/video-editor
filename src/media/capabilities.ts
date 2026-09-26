@@ -111,7 +111,7 @@ export interface ExportPlan {
 
 // --- Environment abstraction (lets tests inject fakes; keeps this module pure) ---
 
-interface ConfigProber<C> {
+export interface ConfigProber<C> {
   isConfigSupported(config: C): Promise<{ supported?: boolean | undefined }>;
 }
 
@@ -175,7 +175,7 @@ async function withTimeout(p: Promise<ProbeResult>, ms: number): Promise<ProbeRe
   }
 }
 
-async function probeConfig<C>(
+export async function probeConfig<C>(
   api: ConfigProber<C> | undefined,
   config: C,
   timeoutMs: number,
