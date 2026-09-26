@@ -29,3 +29,26 @@ Format: see CLAUDE.md §8.
   2. Playwright WebKit project. + automated; − WebKit on Linux ≠ iOS Safari (different codecs,
      no hardware encoders), extra browser download.
 - Proposal: option 1; store each device's report JSON alongside benchmarks.
+
+## TL-003: No cross-browser memory-pressure signal
+
+- Affected platforms: iOS Safari (no API at all), Firefox; Chrome only partially
+- Severity: Medium
+- User impact: CLAUDE.md §7 asks to watch memory pressure and lower preview resolution
+  automatically. Browsers give no reliable signal, so a tab can be killed (iOS) before we react.
+- Facts:
+  - iOS Safari exposes no `performance.memory`, no `measureUserAgentSpecificMemory()`, no pressure
+    events. `navigator.deviceMemory` is Chromium-only.
+  - WebCodecs always decodes at full resolution; shrinking the preview canvas saves little. The
+    real levers are the number of decoded frames alive (read-ahead) and concurrent decoders.
+- Options:
+  1. Self-accounting budget: estimate our own footprint (live frames × bytes per frame, caches)
+     from `FrameTracker` and cap it per device class (e.g. 4K clip ⇒ read-ahead 2). + works
+     everywhere, deterministic; − estimates only our allocations, not the browser's.
+  2. Chrome-only `performance.measureUserAgentSpecificMemory()` (we are cross-origin isolated).
+     - real numbers; − Chromium only, slow (seconds), not on iOS where it matters most.
+  3. Reactive degradation: on decoder errors / `QuotaExceededError`, drop read-ahead and preview
+     quality, then retry. + catches real failures; − only after something went wrong.
+- Proposal: 1 + 3 in M4 (export is the peak-memory path), 2 as extra telemetry on `/debug`
+  only. M2 keeps the static bound (6 frames ahead) and the backing store capped at video
+  resolution.

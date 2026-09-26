@@ -41,4 +41,15 @@ describe('mediaStore', () => {
     await flush();
     expect(store.getState().items).toEqual([]);
   });
+
+  it('clears the selection when the selected clip is removed', () => {
+    const { client } = deferredClient();
+    const store = createMediaStore(() => client);
+    store.getState().addFiles([file('a.mp4')]);
+    const id = store.getState().items[0]?.id ?? '';
+    store.getState().select(id);
+    expect(store.getState().selectedId).toBe(id);
+    store.getState().remove(id);
+    expect(store.getState().selectedId).toBeNull();
+  });
 });

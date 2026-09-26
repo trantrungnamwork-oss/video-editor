@@ -15,22 +15,33 @@ const ERROR_LABELS = {
   'read-failed': 'Could not read this file.',
 } as const;
 
-export function MediaCard({ item }: { item: MediaItem }) {
+export function MediaCard({ item, selected }: { item: MediaItem; selected: boolean }) {
   const remove = useMediaStore((s) => s.remove);
+  const select = useMediaStore((s) => s.select);
+  const previewable = item.status === 'ready' && item.info.canDecode;
 
   return (
     <li
-      className="rounded-lg bg-neutral-900 p-3"
+      className={`rounded-lg bg-neutral-900 p-3 ${selected ? 'ring-2 ring-green-500' : ''}`}
       data-testid="media-card"
       data-status={item.status}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
           <p className="truncate font-medium" title={item.file.name}>
             {item.file.name}
           </p>
           <p className="text-sm text-neutral-400">{formatBytes(item.file.size)}</p>
         </div>
+        {previewable && !selected && (
+          <button
+            type="button"
+            onClick={() => select(item.id)}
+            className="flex min-h-11 shrink-0 items-center rounded-lg bg-neutral-800 px-3 text-sm font-medium active:bg-neutral-700"
+          >
+            Preview
+          </button>
+        )}
         <button
           type="button"
           onClick={() => remove(item.id)}
