@@ -36,7 +36,18 @@ function pssOf(pid) {
   }
 }
 
-function browserTreeRss(rootPid) {
+/** Chromium process type from its command line (browser, renderer, gpu-process, utility…). */
+function processType(pid) {
+  try {
+    const cmd = readFileSync(`/proc/${pid}/cmdline`, 'utf8');
+    return /--type=([\w-]+)/.exec(cmd)?.[1] ?? 'browser';
+  } catch {
+    return 'other';
+  }
+}
+
+/** Memory per process type for the browser's process tree (see pssOf). */
+function browserTreeByType(rootPid) {
   const table = execFileSync('ps', ['-eo', 'pid=,ppid=,rss='], { encoding: 'utf8' })
     .trim()
     .split('\n')
@@ -52,10 +63,17 @@ function browserTreeRss(rootPid) {
       }
     }
   }
-  return table
-    .filter(([pid]) => inTree.has(pid))
-    .reduce((sum, [pid, , rss]) => sum + (pssOf(pid) ?? rss * 1024), 0);
+  const byType = {};
+  for (const [pid, , rss] of table) {
+    if (!inTree.has(pid)) continue;
+    const t = processType(pid);
+    byType[t] = (byType[t] ?? 0) + (pssOf(pid) ?? rss * 1024);
+  }
+  return byType;
 }
+
+const sumValues = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+const browserTreeRss = (rootPid) => sumValues(browserTreeByType(rootPid));
 
 const run = (cmd, a) =>
   new Promise((resolve, reject) => {
@@ -76,13 +94,21 @@ try {
   const rootPid = browserServer.process().pid;
   const page = await browser.newPage();
   await page.goto(`http://localhost:${PORT}/`);
+  const kind = pssOf(rootPid) === null ? 'RSS' : 'PSS';
   const baseline = browserTreeRss(rootPid);
-  // Only while exporting: the untimed test-clip generation before it is not part of the benchmark.
-  let exporting = false;
-  let peakRss = 0;
+  // Peak per export mode; the untimed test-clip generation before them is not measured.
+  let phase = null;
+  const peaks = { pre: 0, reencode: 0, original: 0 };
+  const breakdown = { pre: {}, reencode: {}, original: {} };
   const rssTimer = setInterval(() => {
     try {
-      if (exporting) peakRss = Math.max(peakRss, browserTreeRss(rootPid));
+      if (!phase) return;
+      const byType = browserTreeByType(rootPid);
+      const total = sumValues(byType);
+      if (total > peaks[phase]) {
+        peaks[phase] = total;
+        breakdown[phase] = byType;
+      }
     } catch {
       // process list unavailable for a moment
     }
@@ -93,7 +119,13 @@ try {
         .getByTestId('bench-status')
         .textContent()
         .catch(() => '')) ?? '';
-    exporting = /Re-encoding|Lossless/.test(text);
+    phase = /Re-encoding/.test(text)
+      ? 'reencode'
+      : /Lossless/.test(text)
+        ? 'original'
+        : /Reading/.test(text)
+          ? 'pre' // just before the timed exports, after the untimed test-clip generation
+          : null;
   }, 200);
   await page.goto(`http://localhost:${PORT}/bench?auto=1&clip=${clip}`);
   await page.getByPlaceholder('Device').fill(device);
@@ -111,15 +143,21 @@ try {
   clearInterval(phaseTimer);
   await browser.close();
   await browserServer.close();
-  const kind = pssOf(rootPid) === null ? 'RSS' : 'PSS';
   console.log(
-    `Browser ${kind}: baseline ${Math.round(baseline / 1e6)} MB, peak ${Math.round(peakRss / 1e6)} MB`,
+    `Browser ${kind}: baseline ${Math.round(baseline / 1e6)} MB; at peak, MB per process type: ${JSON.stringify(
+      Object.fromEntries(
+        Object.entries(breakdown).map(([m, b]) => [
+          m,
+          Object.fromEntries(Object.entries(b).map(([t, v]) => [t, Math.round(v / 1e6)])),
+        ]),
+      ),
+    )}`,
   );
 
   const mb = (b) => (b == null ? 'n/a' : `${Math.round(b / 1e6)} MB`);
   const rows = result.results.map(
     (r) =>
-      `| ${result.version} | ${result.date.slice(0, 10)} | ${device} | ${r.mode === 'original' ? 'Original (copy)' : 'Re-encode'} | ${r.format} | ${r.sourceSec.toFixed(1)} s | ${r.exportSec.toFixed(1)} s | ${r.speed.toFixed(2)}× | ${mb(r.outputBytes)} | ${mb(peakRss)} peak, +${mb(peakRss - baseline)} over idle (all browser processes, ${kind}) |`,
+      `| ${result.version} | ${result.date.slice(0, 10)} | ${device} | ${r.mode === 'original' ? 'Original (copy)' : 'Re-encode'} | ${r.format} | ${r.sourceSec.toFixed(1)} s | ${r.exportSec.toFixed(1)} s | ${r.speed.toFixed(2)}× | ${mb(r.outputBytes)} | ${mb(peaks[r.mode])} peak, +${mb(peaks[r.mode] - baseline)} over idle (all browser processes, ${kind}) |`,
   );
   const path = new URL('../docs/benchmarks.md', import.meta.url);
   const doc = await readFile(path, 'utf8');

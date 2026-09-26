@@ -130,3 +130,29 @@ Format: see CLAUDE.md §8.
   3. Stock `@ffmpeg/core` — **not allowed** (GPL).
 - Proposal: option 2 for the MVP (phone and camera footage is covered). Build option 1 only if
   users actually bring such files; the refusal message lists the supported formats.
+
+## TL-007: Software codecs exceed the 500 MB RAM budget at 1080p
+
+- Affected platforms: devices without hardware VP9/H.264 encode/decode (desktop Linux Chromium,
+  Firefox; possibly low-end Android for some codecs). Phones normally use hardware codecs.
+- Severity: Serious for affected devices, not expected on the MVP target phones (to be confirmed
+  on real devices with `/bench`)
+- Measured (dev machine, headless Chromium, software VP9, PSS of all browser processes):
+  - 1080p re-encode export: renderer peaks at ~1.0 GB, +~0.9 GB over idle.
+  - Isolated, with no app code: the WebCodecs VP9 1080p **encoder alone** adds ~570 MB (same in
+    `quality` and `realtime` latency modes); the VP9 1080p **decoder alone** adds ~310 MB.
+  - So the pipeline's own overhead is small; the browser's software codec buffers dominate.
+    WebCodecs exposes no knob for their thread count or buffering.
+  - After the export the renderer stays around 0.7 GB for a while (allocator doesn't return
+    memory to the OS immediately); memory is reused by the next export, not leaked.
+- Options:
+  1. Keep the default (`hardwareAcceleration: 'no-preference'`, the browser picks hardware when
+     present) and validate the budget on real phones with `/bench`; document that software-codec
+     desktops need ~1 GB free. + no change in quality; − desktop Linux/Firefox users need RAM.
+  2. When only software encoders are available (detected via `isConfigSupported` with
+     `prefer-hardware`), default the export to 720p (~45 % of the pixels, roughly halving codec
+     buffers). + fits tighter budgets; − lower default quality on those devices.
+  3. Force `prefer-hardware`. − in Chrome this can make encoding fail outright where no hardware
+     encoder exists; rejected.
+- Proposal: option 1 now; add option 2 if real-device `/bench` runs show software codecs on
+  target phones.
