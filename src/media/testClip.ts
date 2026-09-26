@@ -21,6 +21,9 @@ export interface TestClipSpec {
   height: number;
   fps: number;
   durationSec: number;
+  /** Audio sample rate (default 48 kHz) and channel count (default stereo). */
+  sampleRate?: number;
+  channels?: number;
 }
 
 export const DEFAULT_TEST_CLIP: TestClipSpec = {
@@ -30,22 +33,30 @@ export const DEFAULT_TEST_CLIP: TestClipSpec = {
   durationSec: 10,
 };
 
-const SAMPLE_RATE = 48_000;
 const AUDIO_CHUNK_FRAMES = 1024;
 const BEEP_SEC = 0.1;
 const FLASH_FRAMES = 3;
 
-/** Parses "WIDTHxHEIGHTxSECONDS[@FPS]", e.g. "1280x720x4@30". */
+/** Parses "WIDTHxHEIGHTxSECONDS[@FPS[:RATE[:CHANNELS]]]", e.g. "1280x720x4@30:24000:1". */
 export function parseTestClipSpec(s: string | null): TestClipSpec | null {
-  const m = s?.match(/^(\d+)x(\d+)x(\d+(?:\.\d+)?)(?:@(\d+))?$/);
+  const m = s?.match(/^(\d+)x(\d+)x(\d+(?:\.\d+)?)(?:@(\d+)(?::(\d+)(?::(\d+))?)?)?$/);
   if (!m) return null;
-  const [, w, h, sec, fps] = m;
-  return { width: Number(w), height: Number(h), durationSec: Number(sec), fps: fps ? +fps : 30 };
+  const [, w, h, sec, fps, rate, ch] = m;
+  return {
+    width: Number(w),
+    height: Number(h),
+    durationSec: Number(sec),
+    fps: fps ? +fps : 30,
+    ...(rate ? { sampleRate: +rate } : {}),
+    ...(ch ? { channels: +ch } : {}),
+  };
 }
 
 export async function generateTestClip(spec: TestClipSpec): Promise<File> {
   const { width, height, fps, durationSec } = spec;
-  const pair = await pickCodecs(width, height);
+  const rate = spec.sampleRate ?? 48_000;
+  const channels = spec.channels ?? 2;
+  const pair = await pickCodecs(width, height, rate, channels);
   if (!pair) throw new Error('No encodable video/audio codec pair on this device');
 
   const output = new Output({
@@ -71,7 +82,7 @@ export async function generateTestClip(spec: TestClipSpec): Promise<File> {
   await output.start();
 
   const frameCount = Math.round(durationSec * fps);
-  const totalAudioFrames = Math.round(durationSec * SAMPLE_RATE);
+  const totalAudioFrames = Math.round(durationSec * rate);
   let audioPos = 0;
 
   for (let i = 0; i < frameCount; i++) {
@@ -80,15 +91,15 @@ export async function generateTestClip(spec: TestClipSpec): Promise<File> {
     await video.add(t, 1 / fps);
 
     // Keep audio interleaved with video so the muxer never buffers much.
-    const audioUntil = Math.min(totalAudioFrames, Math.round(((i + 1) / fps) * SAMPLE_RATE));
+    const audioUntil = Math.min(totalAudioFrames, Math.round(((i + 1) / fps) * rate));
     while (audioPos < audioUntil) {
       const n = Math.min(AUDIO_CHUNK_FRAMES, totalAudioFrames - audioPos);
       const sample = new AudioSample({
-        data: beepChunk(audioPos, n),
+        data: beepChunk(audioPos, n, rate, channels),
         format: 'f32-planar',
-        numberOfChannels: 2,
-        sampleRate: SAMPLE_RATE,
-        timestamp: audioPos / SAMPLE_RATE,
+        numberOfChannels: channels,
+        sampleRate: rate,
+        timestamp: audioPos / rate,
       });
       await audio.add(sample);
       sample.close();
@@ -103,7 +114,7 @@ export async function generateTestClip(spec: TestClipSpec): Promise<File> {
   return new File([buffer], name, { type: pair.container === 'mp4' ? 'video/mp4' : 'video/webm' });
 }
 
-async function pickCodecs(width: number, height: number) {
+async function pickCodecs(width: number, height: number, sampleRate: number, channels: number) {
   const pairs = [
     { container: 'mp4', video: 'avc', audio: 'aac' },
     { container: 'webm', video: 'vp9', audio: 'opus' },
@@ -111,7 +122,7 @@ async function pickCodecs(width: number, height: number) {
   for (const p of pairs) {
     const [v, a] = await Promise.all([
       getFirstEncodableVideoCodec([p.video], { width, height }),
-      getFirstEncodableAudioCodec([p.audio], { numberOfChannels: 2, sampleRate: SAMPLE_RATE }),
+      getFirstEncodableAudioCodec([p.audio], { numberOfChannels: channels, sampleRate }),
     ]);
     if (v && a) return p;
   }
@@ -149,14 +160,13 @@ function formatTimecode(frame: number, fps: number) {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}:${String(ff).padStart(2, '0')}`;
 }
 
-/** Planar stereo chunk: 1 kHz tone for the first BEEP_SEC of every second, silence otherwise. */
-function beepChunk(startFrame: number, n: number): Float32Array {
-  const data = new Float32Array(n * 2);
+/** Planar chunk: 1 kHz tone for the first BEEP_SEC of every second, silence otherwise. */
+function beepChunk(startFrame: number, n: number, rate: number, channels: number): Float32Array {
+  const data = new Float32Array(n * channels);
   for (let i = 0; i < n; i++) {
-    const t = (startFrame + i) / SAMPLE_RATE;
+    const t = (startFrame + i) / rate;
     const v = t % 1 < BEEP_SEC ? 0.3 * Math.sin(2 * Math.PI * 1000 * t) : 0;
-    data[i] = v;
-    data[n + i] = v;
+    for (let c = 0; c < channels; c++) data[c * n + i] = v;
   }
   return data;
 }

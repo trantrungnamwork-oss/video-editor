@@ -22,6 +22,7 @@ export function EditorPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [player, setPlayer] = useState<PreviewPlayer | null>(null);
   const [testClip, setTestClip] = useState<'idle' | 'encoding' | string>('idle');
+  const testClipCount = useRef(0);
   const [exporting, setExporting] = useState<false | 'new' | 'resume'>(false);
   const [pending, setPending] = useState<Checkpoint | null>(null);
 
@@ -97,8 +98,10 @@ export function EditorPage() {
   const addTestClip = async () => {
     setTestClip('encoding');
     try {
+      // `?testclip=A,B,…` cycles through specs, one per added clip (mixed formats in tests).
+      const specs = (new URLSearchParams(location.search).get('testclip') ?? '').split(',');
       const spec =
-        parseTestClipSpec(new URLSearchParams(location.search).get('testclip')) ??
+        parseTestClipSpec(specs[testClipCount.current++ % specs.length] ?? null) ??
         DEFAULT_TEST_CLIP;
       addFiles([await requestTestClip(spec)]);
       setTestClip('idle');

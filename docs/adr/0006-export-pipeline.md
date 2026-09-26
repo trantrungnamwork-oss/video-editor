@@ -17,7 +17,10 @@ cancel; keep the screen on; save via Web Share with a download fallback. Peak RA
   retime to timeline time (same mapping as the preview, `preview/sequence.ts`) →
   `VideoSampleSource` / `AudioSampleSource` (WebCodecs encoders) → `Output`.
 - Resizing and letterboxing into the output frame is done by the encoder source's `transform`
-  (`fit: 'contain'`); audio is resampled to 48 kHz stereo the same way. Clips without audio, and
+  (`fit: 'contain'`). Audio is converted to 48 kHz stereo by our own streaming resampler
+  (`resample.ts`) before it reaches the encoder: Mediabunny's audio transform assumes one input
+  format per stream and fails ("Audio parameters must remain constant") when clips with
+  different rates or channel counts follow each other (field bug: a 22.05 kHz phone clip). Clips without audio, and
   gaps, are filled with silence so the audio track is continuous.
 - Video and audio run as two concurrent loops so the muxer interleaves without buffering a whole
   track; `add()` back-pressure bounds the encoder queue. Only one clip's demuxer per loop is open.

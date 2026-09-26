@@ -104,3 +104,4 @@ Format: see CLAUDE.md §8.
      almost no phone footage, and WebM doesn't open in iOS Photos.
 - Proposal: option 1 for the MVP. Revisit option 2 after the MVP with a device compatibility
   matrix (iOS Photos, Android Gallery, WhatsApp/Zalo re-encoders).
+- **Decision (2026-09-26): option 1.**

@@ -26,8 +26,12 @@ export async function openWithTestClips(
   count: number,
   durationSec: number,
   extraQuery = '',
+  /** Test clip audio as "RATE:CHANNELS", e.g. "24000:1". */
+  audio = '',
 ) {
-  await page.goto(`/?testclip=1280x720x${durationSec}@${FPS}${extraQuery}`);
+  await page.goto(
+    `/?testclip=1280x720x${durationSec}@${FPS}${audio ? `:${audio}` : ''}${extraQuery}`,
+  );
   for (let i = 0; i < count; i++) {
     await page.getByTestId('add-test-clip').click();
     await expect(page.getByTestId('add-test-clip')).toHaveText('Add test clip', {

@@ -38,6 +38,7 @@ import {
   KEYFRAME_INTERVAL_SEC,
   type Format,
 } from './plan';
+import { concatPlanes, Resampler } from './resample';
 import {
   identityOf,
   jobKey,
@@ -340,7 +341,8 @@ export function audioSource(codec: 'aac' | 'opus'): AudioSampleSource {
   return new AudioSampleSource({
     codec,
     bitrate: AUDIO_BITRATE,
-    transform: { sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
+    // No transform: encodeAudio already delivers 48 kHz stereo (see resample.ts); Mediabunny
+    // rejects sources whose rate changes mid-stream.
   });
 }
 
@@ -380,6 +382,7 @@ export async function encodeAudio(
       const input = openClip(clip.file);
       try {
         const track = await input.getPrimaryAudioTrack();
+        let resampler: Resampler | null = null;
         if (track) {
           for await (const sample of new AudioSampleSink(track).samples(clip.inSec, clip.outSec)) {
             try {
@@ -394,15 +397,36 @@ export async function encodeAudio(
               if (!win) continue;
               const ts = timelineTime(clip, sample.timestamp + win.offset / sample.sampleRate);
               await silenceUntil(ts); // tiny gaps between packets or a late first packet
-              const whole = win.offset === 0 && win.count === sample.numberOfFrames;
-              const part = whole ? sample : sample.trim(win.offset, win.offset + win.count);
+              // Convert to the one format the encoder accepts: 48 kHz stereo planar float.
+              if (!resampler || resampler.inRate !== sample.sampleRate) {
+                resampler = new Resampler(sample.sampleRate, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS);
+              }
+              const planes = Array.from({ length: sample.numberOfChannels }, (_, c) => {
+                const plane = new Float32Array(win.count);
+                sample.copyTo(plane, {
+                  planeIndex: c,
+                  format: 'f32-planar',
+                  frameOffset: win.offset,
+                  frameCount: win.count,
+                });
+                return plane;
+              });
+              const out = resampler.process(planes);
+              const frames = out[0]?.length ?? 0;
+              if (frames === 0) continue;
+              const conformed = new AudioSample({
+                data: concatPlanes(out),
+                format: 'f32-planar',
+                numberOfChannels: AUDIO_CHANNELS,
+                sampleRate: AUDIO_SAMPLE_RATE,
+                timestamp: Math.max(ts, written),
+              });
               try {
-                part.setTimestamp(Math.max(ts, written));
-                await source.add(part);
-                written = Math.max(written, ts + win.count / sample.sampleRate);
+                await source.add(conformed);
+                written = Math.max(ts, written) + frames / AUDIO_SAMPLE_RATE;
                 progress(written);
               } finally {
-                if (part !== sample) part.close();
+                conformed.close();
               }
             } finally {
               sample.close();
