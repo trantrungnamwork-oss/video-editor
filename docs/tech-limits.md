@@ -130,6 +130,7 @@ Format: see CLAUDE.md §8.
   3. Stock `@ffmpeg/core` — **not allowed** (GPL).
 - Proposal: option 2 for the MVP (phone and camera footage is covered). Build option 1 only if
   users actually bring such files; the refusal message lists the supported formats.
+- **Decision (2026-09-26): option 2.**
 
 ## TL-007: Software codecs exceed the 500 MB RAM budget at 1080p
 
@@ -156,3 +157,4 @@ Format: see CLAUDE.md §8.
      encoder exists; rejected.
 - Proposal: option 1 now; add option 2 if real-device `/bench` runs show software codecs on
   target phones.
+- **Decision (2026-09-26): option 1.** Desktop requirement documented in the README.

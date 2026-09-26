@@ -4,6 +4,12 @@ Free, open-source video editor that runs entirely in the browser. No backend, no
 uploads — videos never leave your device. Mobile-first (iOS Safari, Android Chrome), installable
 as a PWA.
 
+## Requirements
+
+A current Chrome/Edge, Android Chrome or iOS Safari 26+. Phones use hardware video codecs; on
+computers without hardware VP9/H.264 encoding (e.g. Linux, Firefox) a 1080p export needs about
+1 GB of free RAM (TL-007). Supported inputs: MP4, MOV, WebM, MKV, MPEG-TS (TL-006: no FFmpeg).
+
 ## Development
 
 ```sh
