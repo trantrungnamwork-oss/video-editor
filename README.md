@@ -21,6 +21,21 @@ numbers, 1 kHz beep + white flash every second) for A/V-sync and performance che
 
 See `CLAUDE.md` for project rules and `docs/adr/` for architecture decisions.
 
+## Deploy (Cloudflare Pages)
+
+`.github/workflows/ci.yml` runs lint, typecheck, unit tests, build and Playwright on every push,
+then deploys `dist/` to Cloudflare Pages (project `video-editor`, created on first run).
+`main` is production; every other branch gets a preview URL (see the job summary).
+
+One-time setup, in GitHub → Settings → Secrets and variables → Actions:
+
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare dashboard → Workers & Pages → Account ID (right sidebar).
+- `CLOUDFLARE_API_TOKEN`: My Profile → API Tokens → Create Token → Custom token with
+  **Account › Cloudflare Pages › Edit**.
+
+Without these secrets the deploy job is skipped with a notice; CI still runs. HTTPS is required:
+WebCodecs and OPFS only work in secure contexts, so phones cannot test over plain LAN HTTP.
+
 ## License
 
 MIT
