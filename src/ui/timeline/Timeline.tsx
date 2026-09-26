@@ -14,7 +14,7 @@ import {
   type Clip,
   type Project,
 } from '../../core/project';
-import { clampPps, dropIndex, fitPps, zoomAround } from '../../core/timelineMath';
+import { clampPps, dropIndex, fitPps, minPps, zoomAround } from '../../core/timelineMath';
 import type { PreviewPlayer } from '../../media/preview/previewPlayer';
 import { useProjectStore } from '../../state/projectStore';
 import { usePlayhead } from '../preview/usePlayhead';
@@ -57,7 +57,8 @@ export function Timeline({ player, project, files }: Props) {
   const starts = useMemo(() => clipStarts(project), [project]);
   const duration = useMemo(() => project.clips.reduce((d, c) => d + clipDuration(c), 0), [project]);
   const pad = viewportWidth / 2;
-  const zoom = pps ?? fitPps(duration, Math.max(1, viewportWidth - 32));
+  const minZoom = minPps(duration, Math.max(1, viewportWidth));
+  const zoom = Math.max(minZoom, pps ?? fitPps(duration, Math.max(1, viewportWidth - 32)));
 
   // --- viewport size ---
   useLayoutEffect(() => {
@@ -119,9 +120,11 @@ export function Timeline({ player, project, files }: Props) {
 
   // --- pinch / ctrl+wheel zoom ---
   const zoomRef = useRef(zoom);
+  const minZoomRef = useRef(minZoom);
   useLayoutEffect(() => {
     zoomRef.current = zoom;
-  }, [zoom]);
+    minZoomRef.current = minZoom;
+  }, [zoom, minZoom]);
   useEffect(() => {
     const el = viewportRef.current;
     if (!el || !player) return;
@@ -131,7 +134,7 @@ export function Timeline({ player, project, files }: Props) {
       return clientX - (r.left + r.width / 2);
     };
     const applyZoom = (base: number, scale: number, t: number, anchor: number) => {
-      const z = zoomAround(base, scale, t, anchor);
+      const z = zoomAround(base, scale, t, anchor, minZoomRef.current);
       interacting.current = true;
       setPps(z.pps);
       player.seek(z.playheadSec, false);
@@ -335,7 +338,7 @@ export function Timeline({ player, project, files }: Props) {
             <ZoomButtons
               onZoom={(scale) => {
                 const t = player?.currentTime ?? 0;
-                setPps(clampPps(zoom * scale));
+                setPps(clampPps(zoom * scale, minZoom));
                 player?.seek(t, true);
               }}
             />
@@ -371,7 +374,9 @@ function ZoomButtons({ onZoom }: { onZoom: (scale: number) => void }) {
 
 function Ruler({ duration, pps, pad }: { duration: number; pps: number; pad: number }) {
   const step =
-    [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => s * pps >= 60) ?? 600;
+    [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600].find(
+      (s) => s * pps >= 60,
+    ) ?? 7200;
   const ticks: number[] = [];
   for (let t = 0; t <= duration + 1e-9; t += step) ticks.push(t);
   return (

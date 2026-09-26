@@ -1,14 +1,26 @@
 /** Pixel/time math for the timeline view (zoom is expressed as pixels per second). */
 
+/** Zoom-out limit for short projects; long projects may go further (see minPps). */
 export const MIN_PPS = 8;
 export const MAX_PPS = 600;
+/** Hard floor so a very long project never collapses to nothing. */
+const ABS_MIN_PPS = 0.01;
 
-export const clampPps = (pps: number) => Math.min(MAX_PPS, Math.max(MIN_PPS, pps));
+/**
+ * Lowest zoom for a project: at least far enough out that the whole project fits in a quarter of
+ * the viewport. A fixed floor alone blocked zooming out on long real-world clips.
+ */
+export function minPps(durationSec: number, widthPx: number): number {
+  if (!(durationSec > 0) || !(widthPx > 0)) return MIN_PPS;
+  return Math.max(ABS_MIN_PPS, Math.min(MIN_PPS, (widthPx / durationSec) * 0.25));
+}
+
+export const clampPps = (pps: number, min = MIN_PPS) => Math.min(MAX_PPS, Math.max(min, pps));
 
 /** Zoom level that fits `durationSec` into `widthPx`. */
 export function fitPps(durationSec: number, widthPx: number): number {
   if (!(durationSec > 0) || !(widthPx > 0)) return 100;
-  return clampPps(widthPx / durationSec);
+  return clampPps(widthPx / durationSec, minPps(durationSec, widthPx));
 }
 
 /**
@@ -20,8 +32,9 @@ export function zoomAround(
   scale: number,
   playheadSec: number,
   anchorOffsetPx: number,
+  min = MIN_PPS,
 ): { pps: number; playheadSec: number } {
-  const next = clampPps(pps * scale);
+  const next = clampPps(pps * scale, min);
   const anchorSec = playheadSec + anchorOffsetPx / pps;
   return { pps: next, playheadSec: Math.max(0, anchorSec - anchorOffsetPx / next) };
 }
