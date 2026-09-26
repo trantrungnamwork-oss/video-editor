@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Checkpoint, ExportClip } from '../media/export/exportPipeline';
+import { discardPendingExport, readPendingCheckpoint } from '../media/export/opfsFile';
+import { identityOf, jobKey } from '../media/export/segments';
 import type { PreviewPlayer } from '../media/preview/previewPlayer';
 import type { SequenceClip } from '../media/preview/sequence';
 import { DEFAULT_TEST_CLIP, parseTestClipSpec } from '../media/testClip';
 import { requestTestClip } from '../media/testClipClient';
 import { useMediaStore } from '../state/mediaStore';
+import { persistChanges } from '../state/persistence';
 import { autoAddImportedMedia, useProjectStore } from '../state/projectStore';
 import { ExportDialog } from './export/ExportDialog';
 import { MediaCard } from './MediaCard';
@@ -17,9 +21,22 @@ export function EditorPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [player, setPlayer] = useState<PreviewPlayer | null>(null);
   const [testClip, setTestClip] = useState<'idle' | 'encoding' | string>('idle');
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState<false | 'new' | 'resume'>(false);
+  const [pending, setPending] = useState<Checkpoint | null>(null);
 
-  useEffect(() => autoAddImportedMedia(), []);
+  useEffect(() => {
+    const offAuto = autoAddImportedMedia();
+    const offPersist = persistChanges();
+    return () => {
+      offAuto();
+      offPersist();
+    };
+  }, []);
+
+  const refreshPending = useCallback(() => {
+    void readPendingCheckpoint().then(setPending);
+  }, []);
+  useEffect(refreshPending, [refreshPending]);
 
   const readyById = useMemo(() => {
     const m = new Map<string, Extract<(typeof items)[number], { status: 'ready' }>>();
@@ -52,6 +69,28 @@ export function EditorPage() {
 
   // Output frame follows the first clip's display size (letterboxing the others).
   const first = sequence[0] ? readyById.get(sequence[0].mediaId)?.info.video : undefined;
+  const missingCount = items.filter((it) => it.status === 'missing').length;
+  // Export needs every clip's file; after a reload some may still be waiting for relink.
+  const complete = project.clips.length > 0 && sequence.length === project.clips.length;
+
+  const exportClips = useMemo<ExportClip[]>(
+    () =>
+      sequence.map(({ mediaId, file, inSec, outSec, hasAudio }) => ({
+        mediaId,
+        file,
+        inSec,
+        outSec,
+        hasAudio,
+      })),
+    [sequence],
+  );
+  const resumable =
+    pending !== null &&
+    complete &&
+    jobKey({
+      ...pending.settings,
+      clips: exportClips.map((c) => ({ ...c, file: identityOf(c.file) })),
+    }) === pending.key;
 
   const addTestClip = async () => {
     setTestClip('encoding');
@@ -76,10 +115,10 @@ export function EditorPage() {
           </a>
           <button
             type="button"
-            disabled={!first}
+            disabled={!first || !complete}
             onClick={() => {
               player?.pause(); // free the decoder for the export
-              setExporting(true);
+              setExporting('new');
             }}
             className="min-h-11 rounded-lg bg-green-600 px-4 font-medium text-white active:bg-green-700 disabled:opacity-40"
             data-testid="open-export"
@@ -90,30 +129,87 @@ export function EditorPage() {
       </header>
       {exporting && first && (
         <ExportDialog
-          clips={sequence.map(({ mediaId, file, inSec, outSec, hasAudio }) => ({
-            mediaId,
-            file,
-            inSec,
-            outSec,
-            hasAudio,
-          }))}
+          clips={exportClips}
           durationSec={sequence.reduce((d, c) => d + c.outSec - c.inSec, 0)}
           sourceWidth={first.displayWidth}
           sourceHeight={first.displayHeight}
           fps={first.frameRate ?? 30}
-          onClose={() => setExporting(false)}
+          resumeFrom={exporting === 'resume' ? pending : null}
+          onClose={() => {
+            setExporting(false);
+            refreshPending();
+          }}
         />
       )}
 
-      {first ? (
+      {missingCount > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-950 p-3 text-sm text-amber-200"
+          data-testid="missing-banner"
+        >
+          <span className="flex-1">
+            {missingCount} video{missingCount > 1 ? 's' : ''} from your saved project need
+            {missingCount > 1 ? '' : 's'} to be selected again.
+          </span>
+          <button
+            type="button"
+            className="min-h-11 rounded-lg bg-amber-600 px-3 font-medium text-black"
+            onClick={() => inputRef.current?.click()}
+          >
+            Select videos
+          </button>
+        </div>
+      )}
+
+      {pending && !exporting && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-lg bg-neutral-800 p-3 text-sm"
+          data-testid="resume-banner"
+        >
+          <span className="flex-1">
+            Unfinished export (
+            {Math.round((100 * pending.segmentsDone) / Math.max(1, pending.segmentCount))}% of video
+            done).
+            {!complete && ' Select the missing videos to resume it.'}
+            {complete && !resumable && ' The timeline changed since, so it cannot be resumed.'}
+          </span>
+          <button
+            type="button"
+            className="min-h-11 rounded-lg bg-neutral-700 px-3"
+            onClick={() => void discardPendingExport().then(refreshPending)}
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            className="min-h-11 rounded-lg bg-green-600 px-3 font-medium text-white disabled:opacity-40"
+            disabled={!resumable}
+            onClick={() => {
+              player?.pause();
+              setExporting('resume');
+            }}
+            data-testid="resume-export"
+          >
+            Resume
+          </button>
+        </div>
+      )}
+
+      {project.clips.length > 0 ? (
         <>
-          <PreviewPanel
-            clips={sequence}
-            width={first.displayWidth}
-            height={first.displayHeight}
-            onPlayer={setPlayer}
-          />
-          <Timeline player={player} project={project} files={files} />
+          {first && complete ? (
+            <PreviewPanel
+              clips={sequence}
+              width={first.displayWidth}
+              height={first.displayHeight}
+              onPlayer={setPlayer}
+            />
+          ) : (
+            <p className="rounded-lg bg-neutral-900 p-6 text-center text-neutral-400">
+              Preview is available once all videos of the project are selected again.
+            </p>
+          )}
+          <Timeline player={complete ? player : null} project={project} files={files} />
         </>
       ) : (
         <p className="text-neutral-400">

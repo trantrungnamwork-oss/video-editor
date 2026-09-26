@@ -1,5 +1,5 @@
 import type { MediaWarning } from '../media/probe';
-import { useMediaStore, type MediaItem } from '../state/mediaStore';
+import { itemName, itemSize, useMediaStore, type MediaItem } from '../state/mediaStore';
 import { mediaSourceOf, useProjectStore } from '../state/projectStore';
 import { audioCodecLabel, formatBytes, formatDuration, formatFps, videoCodecLabel } from './format';
 
@@ -23,6 +23,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
     s.history.present.clips.some((c) => c.mediaId === item.id),
   );
   const addable = item.status === 'ready' && item.info.canDecode;
+  const name = itemName(item);
   const remove = () => {
     // Removing from the library also removes the media's clips (one undoable step).
     useProjectStore.getState().removeMedia(item.id);
@@ -37,17 +38,17 @@ export function MediaCard({ item }: { item: MediaItem }) {
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium" title={item.file.name}>
-            {item.file.name}
+          <p className="truncate font-medium" title={name}>
+            {name}
           </p>
-          <p className="text-sm text-neutral-400">{formatBytes(item.file.size)}</p>
+          <p className="text-sm text-neutral-400">{formatBytes(itemSize(item))}</p>
         </div>
         {addable && (
           <button
             type="button"
             onClick={() => addToTimeline(mediaSourceOf(item.id, item.info))}
             className="flex min-h-11 shrink-0 items-center rounded-lg bg-neutral-800 px-3 text-sm font-medium active:bg-neutral-700"
-            aria-label={`Add ${item.file.name} to timeline`}
+            aria-label={`Add ${name} to timeline`}
           >
             {usedInTimeline ? '+ Again' : '+ Add'}
           </button>
@@ -55,7 +56,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
         <button
           type="button"
           onClick={remove}
-          aria-label={`Remove ${item.file.name}`}
+          aria-label={`Remove ${name}`}
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-xl text-neutral-400 active:bg-neutral-800"
         >
           ×
@@ -63,6 +64,13 @@ export function MediaCard({ item }: { item: MediaItem }) {
       </div>
 
       {item.status === 'probing' && <p className="mt-2 text-sm text-neutral-400">Reading…</p>}
+
+      {item.status === 'missing' && (
+        <p className="mt-2 rounded bg-amber-950 p-2 text-sm text-amber-200">
+          Select this video again to keep editing (the browser forgets picked files when the page
+          reloads).
+        </p>
+      )}
 
       {item.status === 'error' && (
         <p className="mt-2 rounded bg-red-950 p-2 text-sm text-red-300" role="alert">

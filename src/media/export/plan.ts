@@ -105,10 +105,15 @@ export function exportFileName(container: Container, now = new Date()): string {
 }
 
 /**
- * Remaining time estimate from progress so far. Uses the overall average rate, which is stable
- * enough for a single pass; null until there is enough signal.
+ * Remaining time estimate from the average rate since (re)starting at `startFraction`; null until
+ * there is enough signal.
  */
-export function estimateRemainingSec(elapsedSec: number, fraction: number): number | null {
-  if (fraction < 0.02 || elapsedSec < 1) return null;
-  return Math.max(0, (elapsedSec * (1 - fraction)) / fraction);
+export function estimateRemainingSec(
+  elapsedSec: number,
+  fraction: number,
+  startFraction = 0,
+): number | null {
+  const done = fraction - startFraction;
+  if (done < 0.02 || elapsedSec < 1) return null;
+  return Math.max(0, (elapsedSec * (1 - fraction)) / done);
 }

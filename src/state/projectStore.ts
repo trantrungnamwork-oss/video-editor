@@ -28,6 +28,8 @@ export interface ProjectState {
   removeMedia(mediaId: string): void;
   undo(): void;
   redo(): void;
+  /** Replaces the project (e.g. restored after a reload); history starts fresh. */
+  restore(project: Project): void;
 }
 
 export const mediaSourceOf = (id: string, info: MediaInfo): MediaSource => ({
@@ -67,6 +69,7 @@ export function createProjectStore() {
         set((s) => ({ history: redo(s.history) }));
         get().select(validSelection(get()));
       },
+      restore: (project) => set({ history: createHistory(project), selectedClipId: null }),
     };
   });
 }
@@ -81,7 +84,8 @@ export const useProjectStore = createProjectStore();
 /**
  * Newly imported clips land on the timeline as soon as they are probed and decodable. Probes run
  * one at a time, so clips arrive in import order. Each media is added once; removing its clips
- * from the timeline later does not bring them back.
+ * from the timeline later does not bring them back, and media the project already knows (restored
+ * or relinked after a reload) is never added again.
  */
 export function autoAddImportedMedia(
   media: typeof useMediaStore = useMediaStore,
@@ -92,6 +96,7 @@ export function autoAddImportedMedia(
     for (const it of items) {
       if (it.status !== 'ready' || !it.info.canDecode || added.has(it.id)) continue;
       added.add(it.id);
+      if (it.id in project.getState().history.present.media) continue;
       project.getState().addMedia(mediaSourceOf(it.id, it.info));
     }
   };

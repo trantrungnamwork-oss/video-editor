@@ -50,6 +50,7 @@ cancel; keep the screen on; save via Web Share with a download fallback. Peak RA
 
 ## Consequences
 
-- If the OS kills the tab, the export is lost: see TL-004 (resume needs a product decision).
+- Superseded in part by ADR 0007: the export is now segmented and resumable (background tabs,
+  tab kills), and the project is persisted.
 - MP4 is not encodable in Linux Chromium (TL-001); CI exercises the WebM path, the test adapts to
   whichever format the browser supports.

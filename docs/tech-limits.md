@@ -75,3 +75,6 @@ Format: see CLAUDE.md §8.
 - Proposal: option 1, built together with project persistence (which the editor needs anyway so
   a reload doesn't lose the edit). M4 ships option 3's safeguards now; the packet-log checkpoint
   lands once you approve.
+- **Decision (2026-09-26): option 1.** Implemented as segmented export with checkpoints plus
+  project persistence and file relinking; see ADR 0007. The same mechanism fixes exports failing
+  when the tab goes to the background (codecs reclaimed): they now pause and resume.

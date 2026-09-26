@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExportClient, type ExportEvent } from '../../media/export/exportClient';
-import type { ExportJob } from '../../media/export/exportPipeline';
+import type { Checkpoint, ExportClip, ExportJob } from '../../media/export/exportPipeline';
 import {
   AUDIO_BITRATE,
   estimateRemainingSec,
@@ -12,37 +12,148 @@ import { formatBytes, formatDuration } from '../format';
 import { useWakeLock } from './useWakeLock';
 
 interface Props {
-  clips: ExportJob['clips'];
+  clips: ExportClip[];
   durationSec: number;
   sourceWidth: number;
   sourceHeight: number;
   fps: number;
+  /** Continue this unfinished export instead of starting a new one. */
+  resumeFrom?: Checkpoint | null;
   onClose: () => void;
 }
 
 type Phase =
   | { kind: 'planning' }
   | { kind: 'choose' }
-  | { kind: 'running'; startedAt: number; encodedSec: number; bytes: number }
+  | { kind: 'running'; startedAt: number; startFraction: number; fraction: number; bytes: number }
+  | { kind: 'paused'; fraction: number; message: string }
   | { kind: 'done'; file: File; elapsedSec: number }
   | { kind: 'error'; message: string };
+
+/** Consecutive interruptions without progress before giving up. */
+const MAX_STALLED_RETRIES = 3;
+const RETRY_DELAY_MS = 800;
 
 const FORMAT_LABEL = { mp4: 'MP4 (H.264 + AAC)', webm: 'WebM (VP9 + Opus)' } as const;
 const BTN = 'min-h-11 rounded-lg px-4 font-medium disabled:opacity-40';
 
+/** Test hook: `?exportfault=N` makes segment N fail once, to exercise resume. */
+function faultAtSegment(): number | undefined {
+  const v = new URLSearchParams(location.search).get('exportfault');
+  return v === null ? undefined : Number(v);
+}
+
 export function ExportDialog(props: Props) {
-  const { durationSec, onClose } = props;
+  const { durationSec, onClose, resumeFrom } = props;
   const client = useMemo(() => new ExportClient(), []);
   const [plans, setPlans] = useState<PresetPlan[]>([]);
   const [preset, setPreset] = useState<Preset | null>(null);
-  const [phase, setPhase] = useState<Phase>({ kind: 'planning' });
-  const running = phase.kind === 'running';
-  const wakeLock = useWakeLock(running);
-  const startRef = useRef(0);
+  const [phase, setPhase] = useState<Phase>(() =>
+    resumeFrom
+      ? {
+          kind: 'running',
+          startedAt: performance.now(),
+          startFraction: resumedFraction(resumeFrom),
+          fraction: resumedFraction(resumeFrom),
+          bytes: 0,
+        }
+      : { kind: 'planning' },
+  );
+  const busy = phase.kind === 'running' || phase.kind === 'paused';
+  const wakeLock = useWakeLock(busy);
+  const jobRef = useRef<ExportJob | null>(null);
+  const startedAtRef = useRef(0);
+  const stalls = useRef({ count: 0, lastFraction: -1 });
 
   useEffect(() => () => client.dispose(), [client]);
 
+  /** Starts the worker; the caller has already put the dialog in the running phase. */
+  const launch = useCallback(
+    (job: ExportJob, resume: boolean) => {
+      jobRef.current = job;
+      const fault = faultAtSegment();
+      client.start(
+        job,
+        (e: ExportEvent) => {
+          if (e.type === 'progress') {
+            setPhase((p) =>
+              p.kind === 'running'
+                ? { ...p, fraction: e.progress.fraction, bytes: e.bytesWritten }
+                : p,
+            );
+          } else if (e.type === 'done') {
+            setPhase({
+              kind: 'done',
+              file: e.file,
+              elapsedSec: (performance.now() - startedAtRef.current) / 1000,
+            });
+          } else if (e.type === 'interrupted') {
+            const s = stalls.current;
+            s.count = e.fraction > s.lastFraction + 1e-6 ? 1 : s.count + 1;
+            s.lastFraction = e.fraction;
+            setPhase(
+              s.count > MAX_STALLED_RETRIES
+                ? {
+                    kind: 'error',
+                    message: `${e.message} (gave up after ${MAX_STALLED_RETRIES} retries)`,
+                  }
+                : { kind: 'paused', fraction: e.fraction, message: e.message },
+            );
+          } else if (e.type === 'cancelled') {
+            setPhase({ kind: 'choose' });
+          } else {
+            setPhase({ kind: 'error', message: e.message });
+          }
+        },
+        { resume, ...(fault !== undefined ? { faultAtSegment: fault } : {}) },
+      );
+    },
+    [client],
+  );
+
+  const run = useCallback(
+    (job: ExportJob, resume: boolean, fromFraction: number) => {
+      const startedAt = performance.now();
+      if (!resume) startedAtRef.current = startedAt;
+      setPhase({
+        kind: 'running',
+        startedAt,
+        startFraction: fromFraction,
+        fraction: fromFraction,
+        bytes: 0,
+      });
+      launch(job, resume);
+    },
+    [launch],
+  );
+
+  // Resume an interrupted export as soon as the page is visible (codecs are only reliable then).
   useEffect(() => {
+    if (phase.kind !== 'paused' || !jobRef.current) return;
+    const job = jobRef.current;
+    const from = phase.fraction;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tryResume = () => {
+      if (document.visibilityState !== 'visible') return;
+      clearTimeout(timer);
+      timer = setTimeout(() => run(job, true, from), RETRY_DELAY_MS);
+    };
+    tryResume();
+    document.addEventListener('visibilitychange', tryResume);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', tryResume);
+    };
+  }, [phase, run]);
+
+  // Plan presets, or jump straight into a resumed export.
+  useEffect(() => {
+    if (resumeFrom) {
+      stalls.current = { count: 0, lastFraction: resumedFraction(resumeFrom) };
+      startedAtRef.current = performance.now();
+      launch({ ...resumeFrom.settings, clips: props.clips }, true);
+      return;
+    }
     let alive = true;
     void client.plan(props.sourceWidth, props.sourceHeight, props.fps).then((p) => {
       if (!alive) return;
@@ -54,52 +165,34 @@ export function ExportDialog(props: Props) {
     return () => {
       alive = false;
     };
-  }, [client, props.sourceWidth, props.sourceHeight, props.fps]);
+    // Planning depends only on the source; the clip list is read when starting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, resumeFrom, launch, props.sourceWidth, props.sourceHeight, props.fps]);
 
-  // Leaving the page would kill the export.
+  // Leaving the page would stop the export (it can be resumed after reopening, but warn anyway).
   useEffect(() => {
-    if (!running) return;
+    if (!busy) return;
     const warn = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [running]);
+  }, [busy]);
 
   const chosen = plans.find((p) => p.preset === preset) ?? null;
 
   const start = () => {
     if (!chosen?.format) return;
-    const fileName = exportFileName(chosen.format.container);
-    startRef.current = performance.now();
-    setPhase({ kind: 'running', startedAt: startRef.current, encodedSec: 0, bytes: 0 });
-    client.start(
+    stalls.current = { count: 0, lastFraction: 0 };
+    run(
       {
         clips: props.clips,
         width: chosen.width,
         height: chosen.height,
         format: chosen.format,
         videoBitrate: chosen.videoBitrate,
+        fileName: exportFileName(chosen.format.container),
       },
-      fileName,
-      (e: ExportEvent) => {
-        if (e.type === 'progress') {
-          setPhase({
-            kind: 'running',
-            startedAt: startRef.current,
-            encodedSec: e.progress.encodedSec,
-            bytes: e.bytesWritten,
-          });
-        } else if (e.type === 'done') {
-          setPhase({
-            kind: 'done',
-            file: e.file,
-            elapsedSec: (performance.now() - startRef.current) / 1000,
-          });
-        } else if (e.type === 'cancelled') {
-          setPhase({ kind: 'choose' });
-        } else {
-          setPhase({ kind: 'error', message: e.message });
-        }
-      },
+      false,
+      0,
     );
   };
 
@@ -181,13 +274,8 @@ export function ExportDialog(props: Props) {
           </>
         )}
 
-        {phase.kind === 'running' && (
-          <RunningView
-            phase={phase}
-            durationSec={durationSec}
-            wakeLock={wakeLock}
-            onCancel={() => client.cancel()}
-          />
+        {(phase.kind === 'running' || phase.kind === 'paused') && (
+          <RunningView phase={phase} wakeLock={wakeLock} onCancel={() => client.cancel()} />
         )}
 
         {phase.kind === 'done' && (
@@ -203,13 +291,15 @@ export function ExportDialog(props: Props) {
               <button type="button" className={`${BTN} bg-neutral-800`} onClick={onClose}>
                 Close
               </button>
-              <button
-                type="button"
-                className={`${BTN} flex-1 bg-neutral-700`}
-                onClick={() => setPhase({ kind: 'choose' })}
-              >
-                Back
-              </button>
+              {!resumeFrom && (
+                <button
+                  type="button"
+                  className={`${BTN} flex-1 bg-neutral-700`}
+                  onClick={() => setPhase({ kind: 'choose' })}
+                >
+                  Back
+                </button>
+              )}
             </div>
           </>
         )}
@@ -218,18 +308,22 @@ export function ExportDialog(props: Props) {
   );
 }
 
+/** Progress already banked in a checkpoint (video segments dominate the work). */
+function resumedFraction(cp: Checkpoint): number {
+  if (cp.segmentCount <= 0) return 0;
+  return (0.9 * cp.segmentsDone) / cp.segmentCount + (cp.audioDone ? 0.05 : 0);
+}
+
 function estimateBytes(p: PresetPlan, durationSec: number) {
   return ((p.videoBitrate + AUDIO_BITRATE) * durationSec) / 8;
 }
 
 function RunningView({
   phase,
-  durationSec,
   wakeLock,
   onCancel,
 }: {
-  phase: Extract<Phase, { kind: 'running' }>;
-  durationSec: number;
+  phase: Extract<Phase, { kind: 'running' | 'paused' }>;
   wakeLock: string;
   onCancel: () => void;
 }) {
@@ -238,9 +332,11 @@ function RunningView({
     const id = setInterval(() => setNow(performance.now()), 500);
     return () => clearInterval(id);
   }, []);
-  const fraction = durationSec > 0 ? Math.min(1, phase.encodedSec / durationSec) : 0;
-  const elapsed = (now - phase.startedAt) / 1000;
-  const eta = estimateRemainingSec(elapsed, fraction);
+  const fraction = Math.min(1, phase.fraction);
+  const eta =
+    phase.kind === 'running'
+      ? estimateRemainingSec((now - phase.startedAt) / 1000, fraction, phase.startFraction)
+      : null;
 
   return (
     <>
@@ -254,26 +350,38 @@ function RunningView({
           data-testid="export-progress"
         >
           <div
-            className="h-full bg-green-500 transition-[width]"
+            className={`h-full transition-[width] ${phase.kind === 'paused' ? 'bg-amber-500' : 'bg-green-500'}`}
             style={{ width: `${fraction * 100}%` }}
           />
         </div>
         <p className="mt-2 flex justify-between font-mono text-sm tabular-nums text-neutral-300">
           <span>{Math.round(fraction * 100)}%</span>
-          <span>{formatBytes(phase.bytes)}</span>
+          {phase.kind === 'running' && phase.bytes > 0 && <span>{formatBytes(phase.bytes)}</span>}
           <span data-testid="export-eta">
-            {eta === null ? 'estimating…' : `${formatDuration(eta).replace(/\.\d$/, '')} left`}
+            {phase.kind === 'paused'
+              ? 'paused'
+              : eta === null
+                ? 'estimating…'
+                : `${formatDuration(eta).replace(/\.\d$/, '')} left`}
           </span>
         </p>
       </div>
-      <p className="rounded bg-amber-950 p-2 text-sm text-amber-200">
-        Keep this tab open and don&apos;t lock the screen until the export finishes.
-        {wakeLock === 'active'
-          ? ' The screen is being kept on.'
-          : wakeLock === 'unsupported'
-            ? " This browser can't keep the screen on automatically."
-            : ''}
-      </p>
+      {phase.kind === 'paused' ? (
+        <p className="rounded bg-amber-950 p-2 text-sm text-amber-200" data-testid="export-paused">
+          Paused ({phase.message}). It continues from the last saved point as soon as this tab is in
+          front.
+        </p>
+      ) : (
+        <p className="rounded bg-amber-950 p-2 text-sm text-amber-200">
+          Keep this tab in front until the export finishes. If you switch away, it pauses and
+          continues from the last saved point when you come back.
+          {wakeLock === 'active'
+            ? ' The screen is being kept on.'
+            : wakeLock === 'unsupported'
+              ? " This browser can't keep the screen on automatically."
+              : ''}
+        </p>
+      )}
       <button
         type="button"
         className={`${BTN} bg-neutral-800 active:bg-neutral-700`}
@@ -315,7 +423,7 @@ function DoneView({
   return (
     <>
       <p className="text-neutral-300" data-testid="export-done">
-        Done: <span className="font-mono">{file.name}</span> · {formatBytes(file.size)} · encoded in{' '}
+        Done: <span className="font-mono">{file.name}</span> · {formatBytes(file.size)} · took{' '}
         {formatDuration(elapsedSec).replace(/\.\d$/, '')}
       </p>
       {shareError && (

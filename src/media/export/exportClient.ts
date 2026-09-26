@@ -5,6 +5,7 @@ import type { FromExportWorker, ToExportWorker } from './protocol';
 export type ExportEvent =
   | { type: 'progress'; progress: ExportProgress; bytesWritten: number }
   | { type: 'done'; file: File }
+  | { type: 'interrupted'; fraction: number; message: string }
   | { type: 'cancelled' }
   | { type: 'error'; message: string };
 
@@ -39,9 +40,19 @@ export class ExportClient {
     });
   }
 
-  start(job: ExportJob, fileName: string, listener: (e: ExportEvent) => void): void {
+  /** Starts (or, with `resume`, continues from a matching checkpoint) an export. */
+  start(
+    job: ExportJob,
+    listener: (e: ExportEvent) => void,
+    opts: { resume?: boolean; faultAtSegment?: number } = {},
+  ): void {
     this.listener = listener;
-    this.send({ type: 'start', job, fileName });
+    this.send({
+      type: 'start',
+      job,
+      resume: opts.resume ?? false,
+      ...(opts.faultAtSegment !== undefined ? { faultAtSegment: opts.faultAtSegment } : {}),
+    });
   }
 
   cancel(): void {

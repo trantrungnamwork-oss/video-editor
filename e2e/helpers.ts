@@ -21,8 +21,13 @@ export const takeLongTasks = (page: Page) =>
   page.evaluate(() => (window as unknown as { __longTasks: number[] }).__longTasks.splice(0));
 
 /** Encodes `count` test clips on the device and waits until they are all on the timeline. */
-export async function openWithTestClips(page: Page, count: number, durationSec: number) {
-  await page.goto(`/?testclip=1280x720x${durationSec}@${FPS}`);
+export async function openWithTestClips(
+  page: Page,
+  count: number,
+  durationSec: number,
+  extraQuery = '',
+) {
+  await page.goto(`/?testclip=1280x720x${durationSec}@${FPS}${extraQuery}`);
   for (let i = 0; i < count; i++) {
     await page.getByTestId('add-test-clip').click();
     await expect(page.getByTestId('add-test-clip')).toHaveText('Add test clip', {
@@ -62,3 +67,15 @@ export const clipIds = (page: Page) =>
     .evaluateAll((els) => els.map((e) => e.getAttribute('data-clip-id') ?? ''));
 
 export const clipLabels = (page: Page) => page.getByTestId('clip-duration').allInnerTexts();
+
+/** Runs an export from an open dialog and returns the downloaded file. */
+export async function finishExportAndDownload(page: Page) {
+  await expect(page.getByTestId('export-done')).toBeVisible({ timeout: 150_000 });
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByTestId('export-download').click(),
+  ]);
+  const path = await download.path();
+  if (!path) throw new Error('download has no path');
+  return { name: download.suggestedFilename(), path };
+}

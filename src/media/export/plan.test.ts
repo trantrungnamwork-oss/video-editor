@@ -63,5 +63,7 @@ describe('helpers', () => {
     expect(estimateRemainingSec(10, 0.01)).toBeNull();
     expect(estimateRemainingSec(10, 0.25)).toBe(30);
     expect(estimateRemainingSec(10, 1)).toBe(0);
+    // Resumed at 50 %: 10 s for the next 25 % means 10 s left.
+    expect(estimateRemainingSec(10, 0.75, 0.5)).toBe(10);
   });
 });

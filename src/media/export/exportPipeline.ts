@@ -1,17 +1,25 @@
 /**
- * Export: decodes every clip of the sequence, retimes frames and audio to the timeline, re-encodes
- * with the device's encoders and muxes into a streamed target (an OPFS file in the worker).
+ * Export: decodes the timeline, re-encodes with the device's encoders and muxes the result.
+ *
+ * Resumable by design (ADR 0007):
+ *  1. Audio is encoded in one pass into `audio.<ext>` (cheap; segmenting it would put encoder
+ *     priming gaps at every seam).
+ *  2. Video is encoded as independent segments `seg-N.<ext>` of SEGMENT_SEC each, every one
+ *     starting with a keyframe. A checkpoint records finished work after each file.
+ *  3. The segments and the audio are stream-copied (no re-encode) into the final file.
+ * An interruption costs at most the segment in progress. All files live in an OPFS job directory.
  *
  * Memory stays bounded: frames go straight from decoder to encoder (Mediabunny applies
- * back-pressure on `add`), audio is small, and the muxer writes out as it goes. Video and audio are
- * produced by two concurrent loops so the muxer never has to hold one track while waiting for the
- * other.
+ * back-pressure on `add`) and every output streams to disk.
  */
 import {
   AudioSample,
   AudioSampleSink,
   AudioSampleSource,
   BlobSource,
+  EncodedAudioPacketSource,
+  EncodedPacketSink,
+  EncodedVideoPacketSource,
   Input,
   Mp4OutputFormat,
   Output,
@@ -30,6 +38,16 @@ import {
   KEYFRAME_INTERVAL_SEC,
   type Format,
 } from './plan';
+import {
+  identityOf,
+  jobKey,
+  overallFraction,
+  planSegments,
+  slicesInRange,
+  type FileIdentity,
+  type Phase,
+  type Segment,
+} from './segments';
 
 export interface ExportClip {
   mediaId: string;
@@ -39,21 +57,47 @@ export interface ExportClip {
   hasAudio: boolean;
 }
 
-export interface ExportJob {
-  clips: ExportClip[];
+export interface ExportSettings {
   width: number;
   height: number;
   format: Format;
   videoBitrate: number;
+  fileName: string;
+}
+
+export interface ExportJob extends ExportSettings {
+  clips: ExportClip[];
 }
 
 export interface ExportProgress {
-  /** Timeline seconds encoded so far (video). */
-  encodedSec: number;
-  totalSec: number;
+  fraction: number;
+  phase: Phase;
 }
 
-const SILENCE_CHUNK_FRAMES = 4096;
+export interface Checkpoint {
+  key: string;
+  settings: ExportSettings;
+  clips: {
+    mediaId: string;
+    file: FileIdentity;
+    inSec: number;
+    outSec: number;
+    hasAudio: boolean;
+  }[];
+  totalSec: number;
+  audioDone: boolean;
+  segmentsDone: number;
+  segmentCount: number;
+}
+
+/** Storage for one export job (OPFS directory in the worker, fakes in tests). */
+export interface JobStore {
+  readCheckpoint(): Promise<Checkpoint | null>;
+  writeCheckpoint(c: Checkpoint): Promise<void>;
+  writer(name: string): Promise<{ stream: WritableStream<StreamTargetChunk>; close(): void }>;
+  file(name: string): Promise<File>;
+  clear(): Promise<void>;
+}
 
 export class ExportCancelled extends Error {
   override readonly name = 'ExportCancelled';
@@ -62,25 +106,168 @@ export class ExportCancelled extends Error {
   }
 }
 
+/** A recoverable failure (e.g. codec reclaimed while in the background): resume later. */
+export class ExportInterrupted extends Error {
+  override readonly name = 'ExportInterrupted';
+  constructor(
+    readonly fraction: number,
+    readonly causeMessage: string,
+  ) {
+    super(`Export interrupted: ${causeMessage}`);
+  }
+}
+
+const SILENCE_CHUNK_FRAMES = 4096;
+const ext = (f: Format) => f.container;
+const segName = (s: Segment, f: Format) => `seg-${String(s.index).padStart(4, '0')}.${ext(f)}`;
+
+export function checkpointFor(job: ExportJob): Checkpoint {
+  const clips = job.clips.map((c) => ({
+    mediaId: c.mediaId,
+    file: identityOf(c.file),
+    inSec: c.inSec,
+    outSec: c.outSec,
+    hasAudio: c.hasAudio,
+  }));
+  const totalSec = clips.reduce((t, c) => t + c.outSec - c.inSec, 0);
+  const { width, height, format, videoBitrate, fileName } = job;
+  return {
+    key: jobKey({ ...job, clips }),
+    settings: { width, height, format, videoBitrate, fileName },
+    clips,
+    totalSec,
+    audioDone: false,
+    segmentsDone: 0,
+    segmentCount: planSegments(totalSec).length,
+  };
+}
+
+export interface RunOptions {
+  signal: AbortSignal;
+  onProgress: (p: ExportProgress) => void;
+  /** Test hook: throw inside this segment (once) to exercise the resume path. */
+  injectFault?: (segmentIndex: number) => boolean;
+}
+
 export async function runExport(
   job: ExportJob,
+  store: JobStore,
   target: WritableStream<StreamTargetChunk>,
-  signal: AbortSignal,
-  onProgress: (p: ExportProgress) => void,
+  opts: RunOptions,
 ): Promise<void> {
   const seq = schedule(job.clips.map((c, i) => ({ ...c, id: String(i), frameRate: null })));
-  const totalSec = seq[seq.length - 1]?.endSec ?? 0;
-  if (totalSec <= 0) throw new Error('Nothing to export');
+  const fresh = checkpointFor(job);
+  if (fresh.totalSec <= 0) throw new Error('Nothing to export');
 
-  const output = new Output({
-    format:
-      job.format.container === 'mp4'
-        ? new Mp4OutputFormat({ fastStart: false })
-        : new WebMOutputFormat(),
-    target: new StreamTarget(target, { chunked: true, chunkSize: 2 * 1024 * 1024 }),
+  let cp = await store.readCheckpoint().catch(() => null);
+  if (!cp || cp.key !== fresh.key) {
+    await store.clear();
+    cp = fresh;
+    await store.writeCheckpoint(cp);
+  }
+  const withAudio = seq.some((c) => c.hasAudio);
+  const segments = planSegments(cp.totalSec);
+  const progress = {
+    audio: cp.audioDone || !withAudio ? 1 : 0,
+    video: cp.segmentsDone / segments.length,
+    mux: 0,
+  };
+  const report = (phase: Phase) => opts.onProgress({ fraction: overallFraction(progress), phase });
+  const check = () => {
+    if (opts.signal.aborted) throw new ExportCancelled();
+  };
+  const interrupted = (err: unknown): never => {
+    if (opts.signal.aborted || err instanceof ExportCancelled) throw new ExportCancelled();
+    throw new ExportInterrupted(
+      overallFraction(progress),
+      err instanceof Error ? err.message : String(err),
+    );
+  };
+
+  // 1. Audio, one pass.
+  if (withAudio && !cp.audioDone) {
+    try {
+      await encodeAudioFile(job, seq, store, check, (f) => {
+        progress.audio = f;
+        report('audio');
+      });
+    } catch (err) {
+      interrupted(err);
+    }
+    cp = { ...cp, audioDone: true };
+    await store.writeCheckpoint(cp);
+  }
+
+  // 2. Video segments.
+  for (const seg of segments.slice(cp.segmentsDone)) {
+    check();
+    try {
+      await encodeVideoSegment(job, seq, seg, store, check, opts.injectFault, (f) => {
+        progress.video = (seg.index + f) / segments.length;
+        report('video');
+      });
+    } catch (err) {
+      interrupted(err);
+    }
+    cp = { ...cp, segmentsDone: seg.index + 1 };
+    await store.writeCheckpoint(cp);
+  }
+
+  // 3. Stream-copy into the final file.
+  check();
+  await mux(job.format, segments, withAudio, store, target, check, (f) => {
+    progress.mux = f;
+    report('mux');
   });
+  await store.clear();
+}
 
-  const video = new VideoSampleSource({
+function containerFormat(f: Format) {
+  return f.container === 'mp4' ? new Mp4OutputFormat({ fastStart: false }) : new WebMOutputFormat();
+}
+
+async function withOutput(
+  store: JobStore,
+  name: string,
+  format: Format,
+  setup: (o: Output) => void,
+  body: () => Promise<void>,
+) {
+  const w = await store.writer(name);
+  const output = new Output({
+    format: containerFormat(format),
+    target: new StreamTarget(w.stream, { chunked: true, chunkSize: 2 * 1024 * 1024 }),
+  });
+  setup(output);
+  try {
+    await output.start();
+    await body();
+    await output.finalize();
+  } catch (err) {
+    await output.cancel().catch(() => undefined);
+    throw err;
+  } finally {
+    w.close();
+  }
+}
+
+function openClip(file: File): Input {
+  return new Input({
+    source: new BlobSource(file, { maxCacheSize: 8 * 1024 * 1024 }),
+    formats: SUPPORTED_INPUT_FORMATS,
+  });
+}
+
+async function encodeVideoSegment(
+  job: ExportJob,
+  seq: ScheduledClip[],
+  seg: Segment,
+  store: JobStore,
+  check: () => void,
+  injectFault: RunOptions['injectFault'],
+  progress: (f: number) => void,
+) {
+  const source = new VideoSampleSource({
     codec: job.format.video,
     bitrate: job.videoBitrate,
     keyFrameInterval: KEYFRAME_INTERVAL_SEC,
@@ -88,76 +275,76 @@ export async function runExport(
     // Every clip is scaled into the output frame; other aspect ratios are letterboxed.
     transform: { width: job.width, height: job.height, fit: 'contain' },
   });
-  output.addVideoTrack(video);
-
-  const withAudio = seq.some((c) => c.hasAudio);
-  const audio = withAudio
-    ? new AudioSampleSource({
-        codec: job.format.audio,
-        bitrate: AUDIO_BITRATE,
-        transform: { sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
-      })
-    : null;
-  if (audio) output.addAudioTrack(audio);
-
-  const check = () => {
-    if (signal.aborted) throw new ExportCancelled();
-  };
-
-  try {
-    await output.start();
-    await Promise.all([
-      encodeVideo(seq, video, check, (t) => onProgress({ encodedSec: t, totalSec })),
-      audio ? encodeAudio(seq, audio, check) : Promise.resolve(),
-    ]);
-    check();
-    await output.finalize();
-  } catch (err) {
-    await output.cancel().catch(() => undefined);
-    throw signal.aborted ? new ExportCancelled() : err;
-  }
+  await withOutput(
+    store,
+    segName(seg, job.format),
+    job.format,
+    (o) => o.addVideoTrack(source),
+    async () => {
+      let frames = 0;
+      for (const slice of slicesInRange(seq, seg.startSec, seg.endSec)) {
+        const { clip } = slice;
+        const input = openClip(clip.file);
+        try {
+          const track = await input.getPrimaryVideoTrack();
+          if (!track) throw new Error(`${clip.file.name}: no video track`);
+          const sink = new VideoSampleSink(track);
+          for await (const sample of sink.samples(slice.sourceFrom, slice.sourceTo)) {
+            try {
+              check();
+              const start = timelineTime(clip, sample.timestamp);
+              // A frame that started in the previous segment was encoded there.
+              if (start < seg.startSec - 1e-6) continue;
+              const end = Math.min(
+                clip.endSec,
+                timelineTime(clip, sample.timestamp + sample.duration),
+              );
+              if (end - start <= 1e-6) continue;
+              if (++frames === 5 && injectFault?.(seg.index)) throw new Error('Injected fault');
+              sample.setTimestamp(start);
+              sample.setDuration(end - start);
+              await source.add(sample);
+              progress((end - seg.startSec) / (seg.endSec - seg.startSec));
+            } finally {
+              sample.close();
+            }
+          }
+        } finally {
+          input.dispose();
+        }
+      }
+    },
+  );
 }
 
-async function openClip(clip: ScheduledClip): Promise<Input> {
-  return new Input({
-    source: new BlobSource(clip.file, { maxCacheSize: 8 * 1024 * 1024 }),
-    formats: SUPPORTED_INPUT_FORMATS,
-  });
-}
-
-async function encodeVideo(
+async function encodeAudioFile(
+  job: ExportJob,
   seq: ScheduledClip[],
-  source: VideoSampleSource,
+  store: JobStore,
+  check: () => void,
+  progress: (f: number) => void,
+) {
+  const source = new AudioSampleSource({
+    codec: job.format.audio,
+    bitrate: AUDIO_BITRATE,
+    transform: { sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
+  });
+  const total = seq[seq.length - 1]?.endSec ?? 0;
+  await withOutput(
+    store,
+    `audio.${ext(job.format)}`,
+    job.format,
+    (o) => o.addAudioTrack(source),
+    () => encodeAudio(seq, source, check, (t) => progress(total > 0 ? t / total : 1)),
+  );
+}
+
+async function encodeAudio(
+  seq: ScheduledClip[],
+  source: AudioSampleSource,
   check: () => void,
   progress: (t: number) => void,
 ) {
-  for (const clip of seq) {
-    check();
-    const input = await openClip(clip);
-    try {
-      const track = await input.getPrimaryVideoTrack();
-      if (!track) throw new Error(`${clip.file.name}: no video track`);
-      for await (const sample of new VideoSampleSink(track).samples(clip.inSec, clip.outSec)) {
-        try {
-          check();
-          const start = timelineTime(clip, sample.timestamp);
-          const end = Math.min(clip.endSec, timelineTime(clip, sample.timestamp + sample.duration));
-          if (end - start <= 1e-6) continue;
-          sample.setTimestamp(start);
-          sample.setDuration(end - start);
-          await source.add(sample);
-          progress(end);
-        } finally {
-          sample.close();
-        }
-      }
-    } finally {
-      input.dispose();
-    }
-  }
-}
-
-async function encodeAudio(seq: ScheduledClip[], source: AudioSampleSource, check: () => void) {
   /** Timeline time up to which audio has been written; gaps are filled with silence. */
   let written = 0;
   const silenceUntil = async (t: number) => {
@@ -184,7 +371,7 @@ async function encodeAudio(seq: ScheduledClip[], source: AudioSampleSource, chec
   for (const clip of seq) {
     check();
     if (clip.hasAudio) {
-      const input = await openClip(clip);
+      const input = openClip(clip.file);
       try {
         const track = await input.getPrimaryAudioTrack();
         if (track) {
@@ -200,13 +387,14 @@ async function encodeAudio(seq: ScheduledClip[], source: AudioSampleSource, chec
               );
               if (!win) continue;
               const ts = timelineTime(clip, sample.timestamp + win.offset / sample.sampleRate);
-              await silenceUntil(ts); // tiny gaps between audio packets or a late first packet
+              await silenceUntil(ts); // tiny gaps between packets or a late first packet
               const whole = win.offset === 0 && win.count === sample.numberOfFrames;
               const part = whole ? sample : sample.trim(win.offset, win.offset + win.count);
               try {
                 part.setTimestamp(Math.max(ts, written));
                 await source.add(part);
                 written = Math.max(written, ts + win.count / sample.sampleRate);
+                progress(written);
               } finally {
                 if (part !== sample) part.close();
               }
@@ -221,5 +409,101 @@ async function encodeAudio(seq: ScheduledClip[], source: AudioSampleSource, chec
     }
     // Clips without audio (or whose audio ends early) become silence.
     await silenceUntil(clip.endSec);
+    progress(written);
   }
+}
+
+async function mux(
+  format: Format,
+  segments: Segment[],
+  withAudio: boolean,
+  store: JobStore,
+  target: WritableStream<StreamTargetChunk>,
+  check: () => void,
+  progress: (f: number) => void,
+) {
+  const output = new Output({
+    format: containerFormat(format),
+    target: new StreamTarget(target, { chunked: true, chunkSize: 2 * 1024 * 1024 }),
+  });
+  const video = new EncodedVideoPacketSource(format.video);
+  output.addVideoTrack(video);
+  const audio = withAudio ? new EncodedAudioPacketSource(format.audio) : null;
+  if (audio) output.addAudioTrack(audio);
+
+  const copyVideo = async () => {
+    let baseConfig: VideoDecoderConfig | null = null;
+    for (const seg of segments) {
+      check();
+      const input = openClip(await store.file(segName(seg, format)));
+      try {
+        const track = await input.getPrimaryVideoTrack();
+        if (!track) throw new Error(`segment ${seg.index} has no video`);
+        const config = await track.getDecoderConfig();
+        if (!config) throw new Error(`segment ${seg.index}: unknown codec`);
+        if (baseConfig && !sameDecoderConfig(baseConfig, config)) {
+          throw new Error('The encoder changed its output settings between segments');
+        }
+        let first = !baseConfig;
+        baseConfig ??= config;
+        for await (const packet of new EncodedPacketSink(track).packets()) {
+          await video.add(packet, first ? { decoderConfig: config } : undefined);
+          first = false;
+        }
+      } finally {
+        input.dispose();
+      }
+      progress((seg.index + 1) / segments.length);
+    }
+  };
+
+  const copyAudio = async () => {
+    if (!audio) return;
+    const input = openClip(await store.file(`audio.${ext(format)}`));
+    try {
+      const track = await input.getPrimaryAudioTrack();
+      if (!track) throw new Error('audio file has no audio');
+      const config = await track.getDecoderConfig();
+      let first = true;
+      for await (const packet of new EncodedPacketSink(track).packets()) {
+        await audio.add(packet, first && config ? { decoderConfig: config } : undefined);
+        first = false;
+      }
+    } finally {
+      input.dispose();
+    }
+  };
+
+  try {
+    await output.start();
+    await Promise.all([copyVideo(), copyAudio()]);
+    check();
+    await output.finalize();
+  } catch (err) {
+    await output.cancel().catch(() => undefined);
+    throw err;
+  }
+}
+
+function sameDecoderConfig(a: VideoDecoderConfig, b: VideoDecoderConfig): boolean {
+  if (a.codec !== b.codec || a.codedWidth !== b.codedWidth || a.codedHeight !== b.codedHeight) {
+    return false;
+  }
+  return bytesEqual(a.description, b.description);
+}
+
+function bytesEqual(
+  a: AllowSharedBufferSource | undefined,
+  b: AllowSharedBufferSource | undefined,
+) {
+  if (!a || !b) return !a && !b;
+  const x =
+    a instanceof ArrayBuffer || a instanceof SharedArrayBuffer
+      ? new Uint8Array(a)
+      : new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  const y =
+    b instanceof ArrayBuffer || b instanceof SharedArrayBuffer
+      ? new Uint8Array(b)
+      : new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
 }
