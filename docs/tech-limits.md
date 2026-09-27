@@ -211,4 +211,4 @@ error`, the error Chromium raises when a `File` can no longer be read. The previ
   duplicate; the preview reopens it), and after a read error the export dialog checks which
   source files are still readable. A retest with a fresh import, then mute + fade-out, exported
   without error, so the earlier failure is attributed to lost access, not to the audio settings.
-- **Status: open**, decision on option 2/3 (OPFS copy) pending.
+- **Decision (2026-09-27): option 3**, implemented as the OPFS media vault (ADR 0011).

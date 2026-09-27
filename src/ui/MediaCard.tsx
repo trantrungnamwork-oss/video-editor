@@ -80,6 +80,7 @@ export function MediaCard({ item }: { item: MediaItem }) {
       )}
 
       {item.status === 'ready' && <MediaDetails info={item.info} />}
+      {item.status === 'ready' && item.vault && <VaultLine vault={item.vault} />}
     </li>
   );
 }
@@ -130,6 +131,29 @@ function MediaDetails({ info }: { info: Extract<MediaItem, { status: 'ready' }>[
         </ul>
       )}
     </>
+  );
+}
+
+/** Whether the app holds its own copy (reopens after a reload without selecting it again). */
+function VaultLine({
+  vault,
+}: {
+  vault: NonNullable<Extract<MediaItem, { status: 'ready' }>['vault']>;
+}) {
+  const text =
+    vault.state === 'copying'
+      ? `Saving a copy in the app… ${Math.round(vault.fraction * 100)}%`
+      : vault.state === 'stored'
+        ? '✓ Saved in the app (reopens without selecting it again)'
+        : `Not saved in the app: ${vault.reason}. After reopening, select it again.`;
+  return (
+    <p
+      className={`mt-2 text-xs ${vault.state === 'skipped' ? 'text-amber-300' : 'text-neutral-400'}`}
+      data-testid="vault-state"
+      data-state={vault.state}
+    >
+      {text}
+    </p>
   );
 }
 

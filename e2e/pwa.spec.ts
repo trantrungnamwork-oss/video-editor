@@ -41,6 +41,10 @@ test('works offline after the first visit', async ({ page, context }) => {
   await page.getByTestId('add-test-clip').click();
   await expect(page.getByTestId('timeline-clip')).toHaveCount(1, { timeout: 60_000 });
   await expect(page.getByTestId('play-toggle')).toBeEnabled();
+  // Keeping the app's copy uses the vault worker.
+  await expect(page.getByTestId('vault-state')).toHaveAttribute('data-state', 'stored', {
+    timeout: 30_000,
+  });
   await page.goto('/debug'); // deep link, served by the SPA fallback from the cache
   await expect(page.getByTestId('report')).toBeVisible({ timeout: 15_000 });
   await context.setOffline(false);

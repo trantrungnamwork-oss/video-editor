@@ -29,8 +29,9 @@ The selected clip's volume (0–200 %), mute and fade-in/out are set under the t
 keyframes; the dialog offers to snap the cuts that aren't. Otherwise **Export** encodes the timeline
 on the device (MP4 H.264/AAC, or WebM VP9/Opus where MP4 is not
 available) at 720p or 1080p, then shares it (Save to Photos on phones) or downloads it. If the tab
-goes to the background the export pauses and resumes; if the tab is closed, the project is kept
-and the export can be resumed after re-selecting the videos.
+goes to the background the export pauses and resumes. Imported videos are copied into the app's
+own storage (when there is room), so after the tab is closed the project, its videos and an
+unfinished export are all still there.
 **Add test clip** encodes a clip on the device itself (frame numbers, 1 kHz beep + white flash
 every second) for A/V-sync and performance checks. Open `/debug` to see what the current device can decode/encode and copy the report as JSON.
 

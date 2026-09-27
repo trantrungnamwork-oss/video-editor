@@ -102,7 +102,7 @@ export function EditorPage() {
   const startNewProject = () => {
     if (!confirm('Start a new project? The current timeline and library will be cleared.')) return;
     useProjectStore.getState().restore(EMPTY_PROJECT);
-    useMediaStore.getState().restoreMissing([]);
+    useMediaStore.getState().clear();
     void discardPendingExport().then(refreshPending);
   };
 

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import {
   clipIds,
   clipLabels,
@@ -15,7 +15,6 @@ const CLIP_SEC = 3;
 
 test.beforeEach(async ({ page }) => observeLongTasks(page));
 
-const totalTime = (page: Page) => page.getByTestId('current-time').locator('..').textContent();
 
 test('split, delete, undo/redo and move', async ({ page }) => {
   await openWithTestClips(page, 2, CLIP_SEC);
@@ -29,7 +28,8 @@ test('split, delete, undo/redo and move', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Delete clip' }).click();
   await expect(page.getByTestId('timeline-clip')).toHaveCount(2);
-  expect(await totalTime(page)).toContain('0:04.5');
+  // The player reports the new duration after it has taken the edited sequence.
+  await expect(page.getByTestId('current-time').locator('..')).toContainText('0:04.5');
 
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(page.getByTestId('timeline-clip')).toHaveCount(3);

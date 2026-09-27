@@ -49,7 +49,7 @@ test('resumes after the page is reloaded mid-export', async ({ page, browser }, 
   const ctx = await browser.newContext();
   const editor = await ctx.newPage();
   editor.on('dialog', (d) => void d.accept()); // the "leave page?" prompt during export
-  await editor.goto('/');
+  await editor.goto('/?vault=off'); // no stored copy: the video must be selected again
   await editor.getByTestId('file-input').setInputFiles(source);
   await expect(editor.getByTestId('timeline-clip')).toHaveCount(1, { timeout: 30_000 });
   await editor.getByTestId('open-export').click();
@@ -85,7 +85,7 @@ test('resumes after the page is reloaded mid-export', async ({ page, browser }, 
 });
 
 test('starts a new project from the relink banner', async ({ page }) => {
-  await openWithTestClips(page, 1, 2);
+  await openWithTestClips(page, 1, 2, '&vault=off');
   await page.reload(); // generated test clips can't be re-selected: they stay missing
   await expect(page.getByTestId('missing-banner')).toBeVisible();
   page.once('dialog', (d) => void d.accept());
@@ -122,4 +122,44 @@ test('picking a library video again renews it instead of duplicating it', async 
   await editor.getByTestId('stats').locator('summary').click();
   await expect.poll(() => stat(editor, 'shown'), { timeout: 10_000 }).toBeGreaterThan(0.5);
   await ctx.close();
+});
+
+test('reopens stored videos after a reload without selecting them again', async ({ page }) => {
+  await openWithTestClips(page, 2, 2);
+  await expect(page.getByTestId('vault-state')).toHaveCount(2);
+  for (const s of await page.getByTestId('vault-state').all()) {
+    await expect(s).toHaveAttribute('data-state', 'stored', { timeout: 30_000 });
+  }
+  await page.getByTestId('timeline-clip').first().click();
+  await page.getByRole('button', { name: /Mute/ }).click();
+
+  await page.reload(); // what the OS killing the tab looks like to the app
+  await expect(page.getByTestId('timeline-clip')).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.getByTestId('missing-banner')).toHaveCount(0);
+  await expect(page.getByTestId('clip-audio-badge')).toHaveText('🔇');
+  await expect(page.getByTestId('play-toggle')).toBeEnabled();
+  await page.getByTestId('stats').locator('summary').click();
+  await page.getByTestId('play-toggle').click();
+  await expect.poll(() => stat(page, 'shown'), { timeout: 10_000 }).toBeGreaterThan(2.5); // into clip 2
+
+  // Removing a video deletes its copy; a new project deletes the rest.
+  const stored = () =>
+    page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle('media', { create: true });
+      const names: string[] = [];
+      for await (const n of (dir as unknown as { keys(): AsyncIterable<string> }).keys()) {
+        names.push(n);
+      }
+      return names.length;
+    });
+  expect(await stored()).toBe(2);
+  await page
+    .getByRole('button', { name: /^Remove / })
+    .first()
+    .click();
+  await expect.poll(stored).toBe(1);
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('new-project').click();
+  await expect.poll(stored).toBe(0);
 });
