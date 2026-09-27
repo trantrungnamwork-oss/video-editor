@@ -24,7 +24,8 @@ is analysed in TL-007 (software VP9 encoder ≈ 570 MB + decoder ≈ 310 MB at 1
 
 M9 (every exported frame drawn by the Canvas 2D compositor, ADR 0012) against its baseline on the
 same machine the same day: re-encode 36.4 s vs 36.6 s (0.0.0+65a9dab: 36.6 s, 1184 MB peak), i.e. no
-measurable cost; peak memory +19 MB.
+measurable cost; peak memory +19 MB. On the Xiaomi (hardware H.264) the 60 s 1080p re-encode went from 39.5 s
+(0.0.0+1404f9e, before M9) to 34.5 s with the compositor: no regression (M9 criterion ≤ +20 %).
 
 | Version       | Date       | Device                                                           | Mode            | Output                  | Source | Export time | Speed  | Output size | Peak memory                                                   |
 | ------------- | ---------- | ---------------------------------------------------------------- | --------------- | ----------------------- | ------ | ----------- | ------ | ----------- | ------------------------------------------------------------- |
@@ -34,3 +35,5 @@ measurable cost; peak memory +19 MB.
 | 0.0.0+1404f9e | 2026-09-27 | Xiaomi Note 15 Pro, Android Chrome 153, 8 cores, 8 GB            | Original (copy) | MP4 AVC copy 1920×1080  | 60.0 s | 8.0 s       | 7.51×  | 30 MB       | 31 MB (page+workers)                                          |
 | M9 compositor | 2026-09-27 | Dev machine: headless Chromium, 4 cores, 17 GB (software codecs) | Re-encode       | WEBM VP9+OPUS 1920×1080 | 60.0 s | 36.4 s      | 1.65×  | 23 MB       | 1203 MB peak, +1024 MB over idle (all browser processes, PSS) |
 | M9 compositor | 2026-09-27 | Dev machine: headless Chromium, 4 cores, 17 GB (software codecs) | Original (copy) | WEBM VP9 copy 1920×1080 | 60.0 s | 0.9 s       | 65.85× | 25 MB       | 918 MB peak, +739 MB over idle (all browser processes, PSS)   |
+| 0.0.0+391f0a4 | 2026-09-27 | Xiaomi Note 15 Pro, Android Chrome 153, 8 cores, 8 GB            | Re-encode       | MP4 AVC+AAC 1920×1080   | 60.0 s | 34.5 s      | 1.74×  | 31 MB       | 17 MB (page+workers)                                          |
+| 0.0.0+391f0a4 | 2026-09-27 | Xiaomi Note 15 Pro, Android Chrome 153, 8 cores, 8 GB            | Original (copy) | MP4 AVC copy 1920×1080  | 60.0 s | 8.5 s       | 7.08×  | 30 MB       | 31 MB (page+workers)                                          |
