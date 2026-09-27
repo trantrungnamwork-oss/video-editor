@@ -120,7 +120,7 @@ export class PreviewSession {
   private async setSequence(clips: SequenceClip[]) {
     await this.stopPlayback();
     this.sequence = schedule(clips);
-    const used = new Set(clips.map((c) => c.mediaId));
+    const used = new Set(clips.map(mediaKey));
     for (const [id, open] of this.media) {
       if (used.has(id)) continue;
       this.media.delete(id);
@@ -137,7 +137,8 @@ export class PreviewSession {
   }
 
   private openMedia(clip: SequenceClip): Promise<OpenMedia> {
-    let open = this.media.get(clip.mediaId);
+    const key = mediaKey(clip);
+    let open = this.media.get(key);
     if (!open) {
       open = (async () => {
         const input = new Input({
@@ -154,8 +155,8 @@ export class PreviewSession {
           audioSink: audio ? new AudioSampleSink(audio) : null,
         };
       })();
-      this.media.set(clip.mediaId, open);
-      open.catch(() => this.media.delete(clip.mediaId));
+      this.media.set(key, open);
+      open.catch(() => this.media.delete(key));
     }
     return open;
   }
@@ -354,6 +355,9 @@ export class PreviewSession {
     };
   }
 }
+
+/** Open demuxers are per media and file handle: a re-picked file (TL-009) gets a new demuxer. */
+const mediaKey = (c: SequenceClip) => `${c.mediaId}:${c.fileToken ?? 0}`;
 
 /** Planar Float32 copy of the part of `sample` inside the clip window, retimed to the timeline. */
 function toChunk(sample: AudioSample, clip: ScheduledClip, fromSec: number): AudioChunk | null {

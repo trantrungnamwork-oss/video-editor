@@ -62,6 +62,8 @@ export class PreviewPlayer {
   private disposeResolve: ((s: WorkerStats) => void) | null = null;
   private disposed = false;
   private sequence: ScheduledClip[] = [];
+  private readonly fileTokens = new WeakMap<File, number>();
+  private nextFileToken = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     this.worker = new Worker(new URL('../../workers/preview.worker.ts', import.meta.url), {
@@ -72,6 +74,15 @@ export class PreviewPlayer {
     const offscreen = canvas.transferControlToOffscreen();
     this.send({ type: 'init', canvas: offscreen }, [offscreen]);
     document.addEventListener('visibilitychange', this.onVisibility);
+  }
+
+  private tokenOf(file: File): number {
+    let t = this.fileTokens.get(file);
+    if (t === undefined) {
+      t = this.nextFileToken++;
+      this.fileTokens.set(file, t);
+    }
+    return t;
   }
 
   get state(): PlayerSnapshot {
@@ -108,6 +119,9 @@ export class PreviewPlayer {
       this.stopClock();
       this.send({ type: 'pause' });
     }
+    // Structured cloning makes a new File per message; tag handles so the worker can tell a
+    // re-picked file from the one it already has open.
+    clips = clips.map((c) => ({ ...c, fileToken: this.tokenOf(c.file) }));
     this.sequence = schedule(clips);
     const durationSec = sequenceDuration(this.sequence);
     this.send({ type: 'set-sequence', clips });

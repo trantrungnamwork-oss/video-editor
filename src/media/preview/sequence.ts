@@ -13,6 +13,8 @@ export interface SequenceClip {
   frameRate: number | null;
   /** Whether the clip's audio track exists and is decodable on this device. */
   hasAudio: boolean;
+  /** Identifies the File handle across the worker boundary (set by PreviewPlayer). */
+  fileToken?: number;
   /** Volume, mute and fades; absent means unchanged audio. */
   audio?: ClipAudio | undefined;
 }

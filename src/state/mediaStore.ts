@@ -60,8 +60,22 @@ export function createMediaStore(getClient: () => ProbeClient) {
       addFiles(files) {
         const ids: string[] = [];
         const relinked = new Map<string, File>();
+        const refreshed = new Map<string, File>();
         const added: MediaItem[] = [];
         for (const file of files) {
+          // Picking a file already in the library renews its handle (the browser may have lost
+          // read access to the old one, TL-009) instead of adding a duplicate.
+          const known = get().items.find(
+            (it) =>
+              it.status === 'ready' &&
+              !refreshed.has(it.id) &&
+              sameFile(identityOf(it.file), identityOf(file)),
+          );
+          if (known) {
+            refreshed.set(known.id, file);
+            ids.push(known.id);
+            continue;
+          }
           const missing = get().items.find(
             (it) =>
               it.status === 'missing' &&
@@ -82,7 +96,9 @@ export function createMediaStore(getClient: () => ProbeClient) {
           items: [
             ...s.items.map((it): MediaItem => {
               const file = relinked.get(it.id);
-              return file ? { id: it.id, file, status: 'probing' } : it;
+              if (file) return { id: it.id, file, status: 'probing' };
+              const renewed = refreshed.get(it.id);
+              return renewed && it.status === 'ready' ? { ...it, file: renewed } : it;
             }),
             ...added,
           ],

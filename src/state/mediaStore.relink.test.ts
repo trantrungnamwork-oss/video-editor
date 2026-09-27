@@ -27,4 +27,19 @@ describe('mediaStore relink', () => {
       [false, 'ready'],
     ]);
   });
+
+  it('renews the handle of a ready item when the same file is picked again', async () => {
+    const client: ProbeClient = { probe: () => Promise.resolve(info), dispose: () => undefined };
+    const store = createMediaStore(() => client);
+    const first = new File([new Uint8Array(3)], 'a.mp4', { lastModified: 42 });
+    const [id] = store.getState().addFiles([first]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    const again = new File([new Uint8Array(3)], 'a.mp4', { lastModified: 42 });
+    expect(store.getState().addFiles([again])).toEqual([id]);
+    const items = store.getState().items;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ id, status: 'ready' });
+    expect(items[0]?.status === 'ready' && items[0].file).toBe(again);
+  });
 });

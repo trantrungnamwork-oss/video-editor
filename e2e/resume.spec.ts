@@ -1,6 +1,6 @@
 import { copyFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-import { finishExportAndDownload, openWithTestClips, startReencodeExport } from './helpers';
+import { finishExportAndDownload, openWithTestClips, startReencodeExport, stat } from './helpers';
 import { expectFlashes, probeFile } from './verify';
 
 // Two 6 s test clips = 12 s = two 10 s export segments.
@@ -96,4 +96,30 @@ test('starts a new project from the relink banner', async ({ page }) => {
   await page.reload();
   await expect(page.getByTestId('missing-banner')).toHaveCount(0);
   await expect(page.getByTestId('media-card')).toHaveCount(0);
+});
+
+test('picking a library video again renews it instead of duplicating it', async ({
+  page,
+  browser,
+}, testInfo) => {
+  await openWithTestClips(page, 1, 2);
+  await page.getByTestId('open-export').click();
+  await startReencodeExport(page);
+  const source = testInfo.outputPath('source.webm');
+  await copyFile((await finishExportAndDownload(page)).path, source);
+
+  const ctx = await browser.newContext();
+  const editor = await ctx.newPage();
+  await editor.goto('/');
+  await editor.getByTestId('file-input').setInputFiles(source);
+  await expect(editor.getByTestId('timeline-clip')).toHaveCount(1, { timeout: 30_000 });
+  await expect(editor.getByTestId('play-toggle')).toBeEnabled();
+  await editor.getByTestId('file-input').setInputFiles(source);
+  await expect(editor.getByTestId('media-card')).toHaveCount(1);
+  await expect(editor.getByTestId('timeline-clip')).toHaveCount(1);
+  // The preview reopens the renewed file and still plays.
+  await editor.getByTestId('play-toggle').click();
+  await editor.getByTestId('stats').locator('summary').click();
+  await expect.poll(() => stat(editor, 'shown'), { timeout: 10_000 }).toBeGreaterThan(0.5);
+  await ctx.close();
 });

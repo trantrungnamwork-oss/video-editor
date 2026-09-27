@@ -1,3 +1,4 @@
+import { isReadError, unreadableFiles } from '../../media/fileAccess';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExportClient, type ExportEvent } from '../../media/export/exportClient';
 import type { CopyAnalysis, CopyClip, CopyJob, CutSnap } from '../../media/export/copyExport';
@@ -361,6 +362,7 @@ export function ExportDialog(props: Props) {
             <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
               Export failed: {phase.message}
             </p>
+            <FileAccessCheck message={phase.message} files={props.clips.map((c) => c.file)} />
             <div className="flex gap-2">
               <button type="button" className={`${BTN} bg-neutral-800`} onClick={onClose}>
                 Close
@@ -580,5 +582,33 @@ function DoneView({
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * After a read error, tells whether the browser lost access to a source file (TL-009) or the
+ * files are fine and the cause is elsewhere.
+ */
+function FileAccessCheck({ message, files }: { message: string; files: File[] }) {
+  const [result, setResult] = useState<{ message: string; lost: string[] } | null>(null);
+  useEffect(() => {
+    if (!isReadError(message)) return;
+    let alive = true;
+    void unreadableFiles(files).then((lost) => {
+      if (alive) setResult({ message, lost: lost.map((f) => f.name) });
+    });
+    return () => {
+      alive = false;
+    };
+    // Checked once per error message.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [message]);
+  if (!isReadError(message) || result?.message !== message) return null;
+  return (
+    <p className="text-sm text-neutral-300" data-testid="file-access-check">
+      {result.lost.length > 0
+        ? `The browser can no longer read ${result.lost.join(', ')}. Select the video again (Import videos), then export.`
+        : 'All source videos are still readable here, so the error came from the export itself.'}
+    </p>
   );
 }
