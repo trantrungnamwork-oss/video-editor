@@ -15,7 +15,6 @@ const CLIP_SEC = 3;
 
 test.beforeEach(async ({ page }) => observeLongTasks(page));
 
-
 test('split, delete, undo/redo and move', async ({ page }) => {
   await openWithTestClips(page, 2, CLIP_SEC);
   await expect(page.getByTestId('current-time').locator('..')).toContainText('0:06.0');
