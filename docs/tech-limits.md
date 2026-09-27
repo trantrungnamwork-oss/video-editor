@@ -158,3 +158,29 @@ Format: see CLAUDE.md §8.
 - Proposal: option 1 now; add option 2 if real-device `/bench` runs show software codecs on
   target phones.
 - **Decision (2026-09-26): option 1.** Desktop requirement documented in the README.
+- **Real device (2026-09-27):** Xiaomi Note 15 Pro (Android Chrome 153) uses hardware H.264:
+  1080p export at 1.52× real time, and a 3-clip 1080p cut/merge export completed without the tab
+  being killed. Android exposes no process memory to the page, so the < 500 MB budget is
+  **accepted on this indirect evidence** (owner's decision), not measured.
+
+## TL-008: iOS Safari cannot be verified from the development environment
+
+- Affected platforms: iOS Safari (every iOS browser uses WebKit).
+- Severity: Serious (an MVP acceptance criterion, CLAUDE.md §9, cannot be signed off)
+- Impact: the iPhone path (WebCodecs H.264/AAC encode, OPFS sync handles, Web Share of files,
+  Wake Lock, memory-pressure reloads) is untested; bugs there reach users first.
+- Why: the build/CI containers run Linux with only Chromium. iOS Safari runs only on Apple
+  hardware; Playwright's "iphone-15" profile is Chromium with an iPhone viewport and touch, and
+  Playwright's Linux WebKit uses GStreamer media, not Apple's VideoToolbox, so neither says
+  anything about iOS codecs or memory limits.
+- Options:
+  1. A person runs the checklist on a real iPhone (`/debug` → Copy JSON, `/bench`, 3-clip
+     cut/merge/export, share to Photos, install PWA offline). + real evidence, 10 minutes;
+     − needs someone with an iPhone.
+  2. A paid cloud device farm (BrowserStack, Sauce Labs, LambdaTest) with real iPhones.
+     - automatable; − paid service, conflicts with §3.9 (no paid services).
+  3. macOS runner with Xcode's iOS Simulator (GitHub `macos` runners). + free for public repos,
+     runs real iOS Safari/WebKit; − simulator uses the Mac's codecs and RAM, so it can catch
+     API/feature gaps but not hardware-codec or memory-limit behaviour.
+- Proposal: option 1 for sign-off; option 3 later as a CI smoke test if iOS regressions appear.
+- **Status (2026-09-27): open**, iPhone criteria recorded as not verified.
