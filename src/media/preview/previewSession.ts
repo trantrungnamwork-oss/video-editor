@@ -14,6 +14,7 @@ import {
   type AudioSample,
   type VideoSample,
 } from 'mediabunny';
+import { applyGain, isSilent } from '../../core/audioGain';
 import { SUPPORTED_INPUT_FORMATS } from '../probe';
 import { FrameTracker } from './frameTracker';
 import { PlaybackQueue } from './playbackQueue';
@@ -286,7 +287,7 @@ export class PreviewSession {
     try {
       for (let i = Math.max(0, indexAt(seq, from)); i < seq.length && live(); i++) {
         const clip = seq[i];
-        if (!clip?.hasAudio) continue; // gap: silence
+        if (!clip?.hasAudio || isSilent(clip.audio)) continue; // gap or muted: silence
         const m = await this.openMedia(clip);
         if (!m.audioSink) continue;
         const srcFrom = Math.max(clip.inSec, sourceTime(clip, from));
@@ -376,5 +377,6 @@ function toChunk(sample: AudioSample, clip: ScheduledClip, fromSec: number): Aud
     channels.push(plane);
   }
   const ts = sample.timestamp + win.offset / sample.sampleRate;
+  applyGain(channels, sample.sampleRate, ts - clip.inSec, clip.outSec - clip.inSec, clip.audio);
   return { timestamp: timelineTime(clip, ts), sampleRate: sample.sampleRate, channels };
 }

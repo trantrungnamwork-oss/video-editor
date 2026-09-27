@@ -3,6 +3,7 @@
  * export (tab backgrounded, codec reclaimed, tab killed) resumes from the last finished one.
  * Pure helpers; the I/O lives in exportPipeline.ts.
  */
+import type { ClipAudio } from '../../core/project';
 import type { FileIdentity } from '../fileIdentity';
 import type { ScheduledClip } from '../preview/sequence';
 
@@ -69,14 +70,20 @@ export function overallFraction(p: { audio: number; video: number; mux: number }
  * job being resumed is identical.
  */
 export function jobKey(job: {
-  clips: readonly { file: FileIdentity; inSec: number; outSec: number; hasAudio: boolean }[];
+  clips: readonly {
+    file: FileIdentity;
+    inSec: number;
+    outSec: number;
+    hasAudio: boolean;
+    audio?: ClipAudio | undefined;
+  }[];
   width: number;
   height: number;
   format: { container: string; video: string; audio: string };
   videoBitrate: number;
 }): string {
   return JSON.stringify({
-    v: 1,
+    v: 2,
     segmentSec: SEGMENT_SEC,
     clips: job.clips.map((c) => [
       c.file.name,
@@ -85,6 +92,7 @@ export function jobKey(job: {
       c.inSec,
       c.outSec,
       c.hasAudio,
+      c.audio ? [c.audio.volume, c.audio.muted, c.audio.fadeInSec, c.audio.fadeOutSec] : null,
     ]),
     size: [job.width, job.height],
     format: [job.format.container, job.format.video, job.format.audio],

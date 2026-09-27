@@ -12,12 +12,31 @@ export interface MediaSource {
   frameRate: number | null;
 }
 
+/** Per-clip audio settings. Absent means DEFAULT_CLIP_AUDIO. */
+export interface ClipAudio {
+  /** Linear gain, 0..MAX_VOLUME (1 = unchanged). */
+  volume: number;
+  muted: boolean;
+  /** Linear fade from silence at the clip start / to silence at the clip end, in seconds. */
+  fadeInSec: number;
+  fadeOutSec: number;
+}
+
+export const DEFAULT_CLIP_AUDIO: ClipAudio = {
+  volume: 1,
+  muted: false,
+  fadeInSec: 0,
+  fadeOutSec: 0,
+};
+export const MAX_VOLUME = 2;
+
 export interface Clip {
   id: string;
   mediaId: string;
   /** Source range [inSec, outSec) in the media's own timeline. */
   inSec: number;
   outSec: number;
+  audio?: ClipAudio;
 }
 
 export interface Project {
@@ -111,7 +130,9 @@ function replaceClip(p: Project, clipId: string, update: (c: Clip) => Clip): Pro
   const clips = p.clips.map((c) => {
     if (c.id !== clipId) return c;
     const next = update(c);
-    if (next.inSec !== c.inSec || next.outSec !== c.outSec) changed = true;
+    if (next.inSec !== c.inSec || next.outSec !== c.outSec || !sameAudio(next.audio, c.audio)) {
+      changed = true;
+    }
     return next;
   });
   return changed ? { ...p, clips } : p;
@@ -146,8 +167,13 @@ export function splitAt(p: Project, t: number, id: IdFactory = defaultId): Proje
   const { clip, index } = hit;
   const cut = snapToFrame(hit.sourceSec, frameRateOf(p, clip.mediaId));
   if (cut - clip.inSec < MIN_CLIP_SEC - 1e-9 || clip.outSec - cut < MIN_CLIP_SEC - 1e-9) return p;
+  // The fade-in stays at the start of the left piece, the fade-out at the end of the right one.
   const left: Clip = { ...clip, outSec: cut };
   const right: Clip = { ...clip, id: id(), inSec: cut };
+  if (clip.audio) {
+    left.audio = { ...clip.audio, fadeOutSec: 0 };
+    right.audio = { ...clip.audio, fadeInSec: 0 };
+  }
   const clips = [...p.clips];
   clips.splice(index, 1, left, right);
   return { ...p, clips };
@@ -169,6 +195,44 @@ export function moveClip(p: Project, clipId: string, toIndex: number): Project {
   clips.splice(to, 0, clip);
   return { ...p, clips };
 }
+
+export const audioOf = (c: Clip): ClipAudio => c.audio ?? DEFAULT_CLIP_AUDIO;
+
+function sameAudio(a: ClipAudio | undefined, b: ClipAudio | undefined): boolean {
+  const x = a ?? DEFAULT_CLIP_AUDIO;
+  const y = b ?? DEFAULT_CLIP_AUDIO;
+  return (
+    x.volume === y.volume &&
+    x.muted === y.muted &&
+    x.fadeInSec === y.fadeInSec &&
+    x.fadeOutSec === y.fadeOutSec
+  );
+}
+
+/**
+ * Updates a clip's audio settings. Volume is clamped to [0, MAX_VOLUME]; fades to the clip
+ * length. Fades are stored as asked (a later trim may shorten the clip) and clamped when applied.
+ */
+export function setClipAudio(p: Project, clipId: string, patch: Partial<ClipAudio>): Project {
+  return replaceClip(p, clipId, (c) => {
+    const merged = { ...audioOf(c), ...patch };
+    const dur = clipDuration(c);
+    const audio: ClipAudio = {
+      volume: clamp(round3(merged.volume), 0, MAX_VOLUME),
+      muted: merged.muted,
+      fadeInSec: clamp(round3(merged.fadeInSec), 0, dur),
+      fadeOutSec: clamp(round3(merged.fadeOutSec), 0, dur),
+    };
+    if (sameAudio(audio, DEFAULT_CLIP_AUDIO)) {
+      const rest = { ...c };
+      delete rest.audio;
+      return rest;
+    }
+    return { ...c, audio };
+  });
+}
+
+const round3 = (v: number) => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0);
 
 /** Drops a media source and every clip that uses it. */
 export function removeMedia(p: Project, mediaId: string): Project {

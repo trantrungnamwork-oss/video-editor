@@ -38,6 +38,8 @@ import {
   KEYFRAME_INTERVAL_SEC,
   type Format,
 } from './plan';
+import { applyGain, isSilent } from '../../core/audioGain';
+import type { ClipAudio } from '../../core/project';
 import { concatPlanes, Resampler } from './resample';
 import {
   identityOf,
@@ -56,6 +58,7 @@ export interface ExportClip {
   inSec: number;
   outSec: number;
   hasAudio: boolean;
+  audio?: ClipAudio | undefined;
 }
 
 export interface ExportSettings {
@@ -84,6 +87,7 @@ export interface Checkpoint {
     inSec: number;
     outSec: number;
     hasAudio: boolean;
+    audio?: ClipAudio | undefined;
   }[];
   totalSec: number;
   audioDone: boolean;
@@ -129,6 +133,7 @@ export function checkpointFor(job: ExportJob): Checkpoint {
     inSec: c.inSec,
     outSec: c.outSec,
     hasAudio: c.hasAudio,
+    ...(c.audio ? { audio: c.audio } : {}),
   }));
   const totalSec = clips.reduce((t, c) => t + c.outSec - c.inSec, 0);
   const { width, height, format, videoBitrate, fileName } = job;
@@ -378,7 +383,7 @@ export async function encodeAudio(
 
   for (const clip of seq) {
     check();
-    if (clip.hasAudio) {
+    if (clip.hasAudio && !isSilent(clip.audio)) {
       const input = openClip(clip.file);
       try {
         const track = await input.getPrimaryAudioTrack();
@@ -411,6 +416,13 @@ export async function encodeAudio(
                 });
                 return plane;
               });
+              applyGain(
+                planes,
+                sample.sampleRate,
+                ts - clip.startSec,
+                clip.endSec - clip.startSec,
+                clip.audio,
+              );
               const out = resampler.process(planes);
               const frames = out[0]?.length ?? 0;
               if (frames === 0) continue;

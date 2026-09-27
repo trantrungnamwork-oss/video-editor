@@ -12,12 +12,14 @@ import {
   clipStarts,
   MIN_CLIP_SEC,
   type Clip,
+  type ClipAudio,
   type Project,
 } from '../../core/project';
 import { clampPps, dropIndex, fitPps, minPps, zoomAround } from '../../core/timelineMath';
 import type { PreviewPlayer } from '../../media/preview/previewPlayer';
 import { useProjectStore } from '../../state/projectStore';
 import { usePlayhead } from '../preview/usePlayhead';
+import { ClipAudioPanel } from './ClipAudioPanel';
 import { TimelineToolbar } from './TimelineToolbar';
 import { THUMB_COUNT, useThumbnails } from '../useThumbnails';
 
@@ -53,6 +55,7 @@ export function Timeline({ player, project, files }: Props) {
   const [pending, setPending] = useState<Pending | null>(null);
   const selectedClipId = useProjectStore((s) => s.selectedClipId);
   const select = useProjectStore((s) => s.select);
+  const selectedClip = project.clips.find((c) => c.id === selectedClipId);
 
   const starts = useMemo(() => clipStarts(project), [project]);
   const duration = useMemo(() => project.clips.reduce((d, c) => d + clipDuration(c), 0), [project]);
@@ -344,6 +347,7 @@ export function Timeline({ player, project, files }: Props) {
             />
           }
         />
+        {selectedClip && <ClipAudioPanel key={selectedClip.id} clip={selectedClip} />}
       </div>
     </div>
   );
@@ -483,6 +487,7 @@ function ClipBlock(props: ClipBlockProps) {
         >
           {(outSec - inSec).toFixed(1)}s
         </span>
+        {clip.audio && <AudioMarks audio={clip.audio} pps={pps} width={width} />}
       </div>
 
       {selected && (
@@ -557,5 +562,39 @@ function TrimHandle({
         {edge === 'in' ? '⟨' : '⟩'}
       </div>
     </div>
+  );
+}
+
+/** Fade ramps and a volume/mute badge on a clip tile. */
+function AudioMarks({ audio, pps, width }: { audio: ClipAudio; pps: number; width: number }) {
+  const ramp = (sec: number) => Math.min(width / 2, sec * pps);
+  const label = audio.muted
+    ? '🔇'
+    : audio.volume !== 1
+      ? `${Math.round(audio.volume * 100)}%`
+      : null;
+  return (
+    <>
+      {audio.fadeInSec > 0 && (
+        <div
+          className="pointer-events-none absolute top-0 left-0 h-full bg-linear-to-r from-black/70 to-transparent"
+          style={{ width: ramp(audio.fadeInSec) }}
+        />
+      )}
+      {audio.fadeOutSec > 0 && (
+        <div
+          className="pointer-events-none absolute top-0 right-0 h-full bg-linear-to-l from-black/70 to-transparent"
+          style={{ width: ramp(audio.fadeOutSec) }}
+        />
+      )}
+      {label && (
+        <span
+          className="absolute top-0.5 left-1 rounded bg-black/60 px-1 font-mono text-[10px] text-white"
+          data-testid="clip-audio-badge"
+        >
+          {label}
+        </span>
+      )}
+    </>
   );
 }

@@ -1,6 +1,7 @@
 /**
  * Timeline ↔ source mapping for sequence playback. Pure; shared by the worker session and tests.
  */
+import type { ClipAudio } from '../../core/project';
 
 export interface SequenceClip {
   id: string;
@@ -12,6 +13,8 @@ export interface SequenceClip {
   frameRate: number | null;
   /** Whether the clip's audio track exists and is decodable on this device. */
   hasAudio: boolean;
+  /** Volume, mute and fades; absent means unchanged audio. */
+  audio?: ClipAudio | undefined;
 }
 
 export interface ScheduledClip extends SequenceClip {

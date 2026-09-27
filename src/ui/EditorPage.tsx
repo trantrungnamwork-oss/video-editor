@@ -64,6 +64,7 @@ export function EditorPage() {
           outSec: c.outSec,
           frameRate: it.info.video.frameRate,
           hasAudio: it.info.audio?.decode.status === 'supported',
+          audio: c.audio,
         };
       }),
     [project, readyById],
@@ -77,13 +78,14 @@ export function EditorPage() {
 
   const exportClips = useMemo<CopyClip[]>(
     () =>
-      sequence.map(({ id, mediaId, file, inSec, outSec, hasAudio }) => ({
+      sequence.map(({ id, mediaId, file, inSec, outSec, hasAudio, audio }) => ({
         clipId: id,
         mediaId,
         file,
         inSec,
         outSec,
         hasAudio,
+        ...(audio ? { audio } : {}),
       })),
     [sequence],
   );

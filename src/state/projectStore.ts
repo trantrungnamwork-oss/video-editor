@@ -6,9 +6,11 @@ import {
   moveClip,
   removeClip,
   removeMedia,
+  setClipAudio,
   splitAt,
   trimIn,
   trimOut,
+  type ClipAudio,
   type MediaSource,
   type Project,
 } from '../core/project';
@@ -25,6 +27,7 @@ export interface ProjectState {
   split(t: number): void;
   removeClip(clipId: string): void;
   moveClip(clipId: string, toIndex: number): void;
+  setClipAudio(clipId: string, patch: Partial<ClipAudio>): void;
   removeMedia(mediaId: string): void;
   undo(): void;
   redo(): void;
@@ -62,6 +65,7 @@ export function createProjectStore() {
       split: (t) => edit((p) => splitAt(p, t)),
       removeClip: (id) => edit((p) => removeClip(p, id)),
       moveClip: (id, to) => edit((p) => moveClip(p, id, to)),
+      setClipAudio: (id, patch) => edit((p) => setClipAudio(p, id, patch)),
       removeMedia: (id) => edit((p) => removeMedia(p, id)),
       undo: () => {
         set((s) => ({ history: undo(s.history) }));
