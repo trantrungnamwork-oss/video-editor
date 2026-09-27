@@ -20,6 +20,7 @@ import type { PreviewPlayer } from '../../media/preview/previewPlayer';
 import { useProjectStore } from '../../state/projectStore';
 import { usePlayhead } from '../preview/usePlayhead';
 import { ClipAudioPanel } from './ClipAudioPanel';
+import { ClipFramePanel } from './ClipFramePanel';
 import { TimelineToolbar } from './TimelineToolbar';
 import { THUMB_COUNT, useThumbnails } from '../useThumbnails';
 
@@ -347,6 +348,7 @@ export function Timeline({ player, project, files }: Props) {
             />
           }
         />
+        {selectedClip && <ClipFramePanel key={`f-${selectedClip.id}`} clip={selectedClip} />}
         {selectedClip && <ClipAudioPanel key={selectedClip.id} clip={selectedClip} />}
       </div>
     </div>

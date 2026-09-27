@@ -3,6 +3,7 @@
  * export (tab backgrounded, codec reclaimed, tab killed) resumes from the last finished one.
  * Pure helpers; the I/O lives in exportPipeline.ts.
  */
+import type { ClipLayout } from '../../core/frame';
 import type { ClipAudio } from '../../core/project';
 import type { FileIdentity } from '../fileIdentity';
 import type { ScheduledClip } from '../preview/sequence';
@@ -76,6 +77,7 @@ export function jobKey(job: {
     outSec: number;
     hasAudio: boolean;
     audio?: ClipAudio | undefined;
+    layout?: ClipLayout | undefined;
   }[];
   width: number;
   height: number;
@@ -83,7 +85,7 @@ export function jobKey(job: {
   videoBitrate: number;
 }): string {
   return JSON.stringify({
-    v: 2,
+    v: 3,
     segmentSec: SEGMENT_SEC,
     clips: job.clips.map((c) => [
       c.file.name,
@@ -93,6 +95,7 @@ export function jobKey(job: {
       c.outSec,
       c.hasAudio,
       c.audio ? [c.audio.volume, c.audio.muted, c.audio.fadeInSec, c.audio.fadeOutSec] : null,
+      c.layout ? [c.layout.fit, c.layout.panX, c.layout.panY] : null,
     ]),
     size: [job.width, job.height],
     format: [job.format.container, job.format.video, job.format.audio],

@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
-import { expect, type Browser } from '@playwright/test';
+import { expect, type Browser, type Page } from '@playwright/test';
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from 'mediabunny';
 import { probeMedia, type MediaInfo } from '../src/media/probe';
 import { scrubTo, stat } from './helpers';
-import { meanLuma } from './png';
+import { lumaGrid, meanLuma } from './png';
 
 const anyDecoder = { isConfigSupported: () => Promise.resolve({ supported: true }) };
 
@@ -119,3 +119,33 @@ export async function beepPeaks(browser: Browser, path: string): Promise<number[
   await ctx.close();
   return peaks;
 }
+
+/** Luma grid of the preview canvas once it shows timeline time `t`. */
+export async function previewGrid(page: Page, t: number, cols = 6, rows = 8): Promise<number[]> {
+  await scrubTo(page, t);
+  await expect.poll(() => stat(page, 'shown')).toBeCloseTo(t, 1);
+  return lumaGrid(await page.getByTestId('preview-canvas').screenshot(), cols, rows);
+}
+
+/** Opens an exported file alone in a fresh page and returns its luma grid at time `t`. */
+export async function exportedGrid(
+  browser: Browser,
+  path: string,
+  t: number,
+  cols = 6,
+  rows = 8,
+): Promise<number[]> {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto('/?vault=off');
+  await page.getByTestId('file-input').setInputFiles(path);
+  await expect(page.getByTestId('timeline-clip')).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('stats').locator('summary').click();
+  const grid = await previewGrid(page, t, cols, rows);
+  await ctx.close();
+  return grid;
+}
+
+/** Largest per-cell luma difference between two grids. */
+export const gridDistance = (a: number[], b: number[]) =>
+  Math.max(...a.map((v, i) => Math.abs(v - (b[i] ?? 0))));

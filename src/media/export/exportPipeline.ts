@@ -25,7 +25,7 @@ import {
   Output,
   StreamTarget,
   VideoSampleSink,
-  VideoSampleSource,
+  CanvasSource,
   WebMOutputFormat,
   type StreamTargetChunk,
 } from 'mediabunny';
@@ -39,7 +39,9 @@ import {
   type Format,
 } from './plan';
 import { applyGain, isSilent } from '../../core/audioGain';
+import type { ClipLayout } from '../../core/frame';
 import type { ClipAudio } from '../../core/project';
+import { drawFrame } from '../render/compositor';
 import { concatPlanes, Resampler } from './resample';
 import {
   identityOf,
@@ -59,6 +61,7 @@ export interface ExportClip {
   outSec: number;
   hasAudio: boolean;
   audio?: ClipAudio | undefined;
+  layout?: ClipLayout | undefined;
 }
 
 export interface ExportSettings {
@@ -88,6 +91,7 @@ export interface Checkpoint {
     outSec: number;
     hasAudio: boolean;
     audio?: ClipAudio | undefined;
+    layout?: ClipLayout | undefined;
   }[];
   totalSec: number;
   audioDone: boolean;
@@ -134,6 +138,7 @@ export function checkpointFor(job: ExportJob): Checkpoint {
     outSec: c.outSec,
     hasAudio: c.hasAudio,
     ...(c.audio ? { audio: c.audio } : {}),
+    ...(c.layout ? { layout: c.layout } : {}),
   }));
   const totalSec = clips.reduce((t, c) => t + c.outSec - c.inSec, 0);
   const { width, height, format, videoBitrate, fileName } = job;
@@ -273,13 +278,15 @@ async function encodeVideoSegment(
   injectFault: RunOptions['injectFault'],
   progress: (f: number) => void,
 ) {
-  const source = new VideoSampleSource({
+  // Every frame is composed at output size (clip placement, later overlays), then encoded.
+  const canvas = new OffscreenCanvas(job.width, job.height);
+  const ctx = canvas.getContext('2d', { alpha: false });
+  if (!ctx) throw new Error('2D context unavailable on OffscreenCanvas');
+  const source = new CanvasSource(canvas, {
     codec: job.format.video,
     bitrate: job.videoBitrate,
     keyFrameInterval: KEYFRAME_INTERVAL_SEC,
     latencyMode: 'quality',
-    // Every clip is scaled into the output frame; other aspect ratios are letterboxed.
-    transform: { width: job.width, height: job.height, fit: 'contain' },
   });
   await withOutput(
     store,
@@ -307,9 +314,8 @@ async function encodeVideoSegment(
               );
               if (end - start <= 1e-6) continue;
               if (++frames === 5 && injectFault?.(seg.index)) throw new Error('Injected fault');
-              sample.setTimestamp(start);
-              sample.setDuration(end - start);
-              await source.add(sample);
+              drawFrame(ctx, sample, clip.layout);
+              await source.add(start, end - start);
               progress((end - seg.startSec) / (seg.endSec - seg.startSec));
             } finally {
               sample.close();

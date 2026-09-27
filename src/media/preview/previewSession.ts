@@ -16,6 +16,7 @@ import {
 } from 'mediabunny';
 import { applyGain, isSilent } from '../../core/audioGain';
 import { SUPPORTED_INPUT_FORMATS } from '../probe';
+import { drawFrame } from '../render/compositor';
 import { FrameTracker } from './frameTracker';
 import { PlaybackQueue } from './playbackQueue';
 import type { AudioChunk, FromWorker, ToWorker, WorkerStats } from './protocol';
@@ -180,11 +181,12 @@ export class PreviewSession {
   }
 
   private draw() {
-    const { ctx, canvas } = this;
-    if (!ctx || !canvas) return;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    this.current?.drawWithFit(ctx, { fit: 'contain' });
+    const { ctx } = this;
+    if (!ctx) return;
+    const current = this.current;
+    // Frames carry timeline timestamps: the clip under the frame decides its placement.
+    const clip = current ? this.sequence[indexAt(this.sequence, current.timestamp)] : undefined;
+    drawFrame(ctx, current, clip?.layout);
   }
 
   private async seek(msg: { id: number; t: number; precise: boolean }) {

@@ -6,7 +6,7 @@ import { StatsPanel } from './StatsPanel';
 
 interface Props {
   clips: SequenceClip[];
-  /** Output frame size (first clip's display size); clips of other shapes are letterboxed. */
+  /** Output frame size (project aspect around the first clip); the preview has its shape. */
   width: number;
   height: number;
   onPlayer: (player: PreviewPlayer | null) => void;
@@ -69,11 +69,19 @@ export function PreviewPanel({ clips, width, height, onPlayer }: Props) {
 
   return (
     <section className="flex flex-col gap-2" data-testid="preview">
-      <div
-        ref={containerRef}
-        className="w-full overflow-hidden rounded-lg bg-black"
-        style={{ aspectRatio: `${width} / ${height}`, maxHeight: '45dvh' }}
-      />
+      {/* Exactly the frame's shape (the compositor fills the whole canvas), at most 45 % of the
+          screen height: portrait frames get narrower instead of distorted. */}
+      <div className="flex justify-center">
+        <div
+          ref={containerRef}
+          className="overflow-hidden rounded-lg bg-black"
+          style={{
+            aspectRatio: `${width} / ${height}`,
+            width: `min(100%, calc(45dvh * ${width / height}))`,
+          }}
+          data-testid="preview-frame"
+        />
+      </div>
       {snapshot?.error && (
         <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
           Preview failed: {snapshot.error}

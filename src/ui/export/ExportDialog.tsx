@@ -19,6 +19,8 @@ interface Props {
   sourceWidth: number;
   sourceHeight: number;
   fps: number;
+  /** Why a lossless copy is impossible regardless of the streams (e.g. the frame was reshaped). */
+  copyBlocked?: string | null;
   /** Continue this unfinished export instead of starting a new one. */
   resumeFrom?: Checkpoint | null;
   /** Applies keyframe snaps to the timeline (one undoable edit); the dialog then re-analyzes. */
@@ -189,10 +191,14 @@ export function ExportDialog(props: Props) {
   // Smart cut: can this exact timeline be exported without re-encoding? Re-run after every edit
   // (e.g. after snapping cuts to keyframes).
   const clipsKey = props.clips.map((c) => `${c.clipId}:${c.inSec}:${c.outSec}`).join('|');
+  const copyBlocked = props.copyBlocked ?? null;
   useEffect(() => {
     if (resumeFrom) return;
     let alive = true;
-    void client.analyzeCopy(props.clips).then((a) => {
+    const analysis = copyBlocked
+      ? Promise.resolve<CopyAnalysis>({ eligible: false, reason: copyBlocked, snaps: [] })
+      : client.analyzeCopy(props.clips);
+    void analysis.then((a) => {
       if (!alive) return;
       setAnalysis(a);
       // Lossless and fast: the best default, unless the user already chose.
@@ -203,7 +209,7 @@ export function ExportDialog(props: Props) {
     };
     // clipsKey captures every clip change that matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, clipsKey, resumeFrom]);
+  }, [client, clipsKey, resumeFrom, copyBlocked]);
 
   // Leaving the page would stop the export (it can be resumed after reopening, but warn anyway).
   useEffect(() => {

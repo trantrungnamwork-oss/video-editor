@@ -22,9 +22,15 @@ so its memory figure includes what the renderer kept from the re-encode (allocat
 memory right away); the copy itself decodes and encodes no video. Where the re-encode memory goes
 is analysed in TL-007 (software VP9 encoder ≈ 570 MB + decoder ≈ 310 MB at 1080p).
 
+M9 (every exported frame drawn by the Canvas 2D compositor, ADR 0012) against its baseline on the
+same machine the same day: re-encode 36.4 s vs 36.6 s (0.0.0+65a9dab: 36.6 s, 1184 MB peak), i.e. no
+measurable cost; peak memory +19 MB.
+
 | Version       | Date       | Device                                                           | Mode            | Output                  | Source | Export time | Speed  | Output size | Peak memory                                                   |
 | ------------- | ---------- | ---------------------------------------------------------------- | --------------- | ----------------------- | ------ | ----------- | ------ | ----------- | ------------------------------------------------------------- |
 | 0.0.0+42b54e7 | 2026-09-26 | Dev machine: headless Chromium, 4 cores, 17 GB (software codecs) | Re-encode       | WEBM VP9+OPUS 1920×1080 | 60.0 s | 55.5 s      | 1.08×  | 23 MB       | 1251 MB peak, +1072 MB over idle (all browser processes, PSS) |
 | 0.0.0+42b54e7 | 2026-09-26 | Dev machine: headless Chromium, 4 cores, 17 GB (software codecs) | Original (copy) | WEBM VP9 copy 1920×1080 | 60.0 s | 1.5 s       | 38.88× | 25 MB       | 913 MB peak, +735 MB over idle (all browser processes, PSS)   |
 | 0.0.0+1404f9e | 2026-09-27 | Xiaomi Note 15 Pro, Android Chrome 153, 8 cores, 8 GB            | Re-encode       | MP4 AVC+AAC 1920×1080   | 60.0 s | 39.5 s      | 1.52×  | 31 MB       | 17 MB (page+workers)                                          |
 | 0.0.0+1404f9e | 2026-09-27 | Xiaomi Note 15 Pro, Android Chrome 153, 8 cores, 8 GB            | Original (copy) | MP4 AVC copy 1920×1080  | 60.0 s | 8.0 s       | 7.51×  | 30 MB       | 31 MB (page+workers)                                          |
+| M9 compositor | 2026-09-27 | Dev machine: headless Chromium, 4 cores, 17 GB (software codecs) | Re-encode       | WEBM VP9+OPUS 1920×1080 | 60.0 s | 36.4 s      | 1.65×  | 23 MB       | 1203 MB peak, +1024 MB over idle (all browser processes, PSS) |
+| M9 compositor | 2026-09-27 | Dev machine: headless Chromium, 4 cores, 17 GB (software codecs) | Original (copy) | WEBM VP9 copy 1920×1080 | 60.0 s | 0.9 s       | 65.85× | 25 MB       | 918 MB peak, +739 MB over idle (all browser processes, PSS)   |

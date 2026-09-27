@@ -5,6 +5,15 @@ import { inflateSync } from 'node:zlib';
  * Just enough PNG decoding to check whether a preview frame is a white flash or a dark frame.
  */
 export function meanLuma(png: Buffer): number {
+  const grid = lumaGrid(png, 1, 1);
+  return grid[0] ?? 0;
+}
+
+/**
+ * Mean luma per cell of a cols × rows grid over the image, row by row. Comparing grids of two
+ * renderings of the same frame checks that they place the picture the same way.
+ */
+export function lumaGrid(png: Buffer, cols: number, rows: number): number[] {
   let pos = 8;
   let width = 0;
   let height = 0;
@@ -29,7 +38,8 @@ export function meanLuma(png: Buffer): number {
   const raw = inflateSync(Buffer.concat(idat));
   const stride = width * channels;
   let prev = Buffer.alloc(stride);
-  let sum = 0;
+  const sums = new Array<number>(cols * rows).fill(0);
+  const counts = new Array<number>(cols * rows).fill(0);
   for (let y = 0; y < height; y++) {
     const filter = raw[y * (stride + 1)];
     const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
@@ -50,10 +60,18 @@ export function meanLuma(png: Buffer): number {
       }
       line[x] = v & 0xff;
     }
+    const row = Math.min(rows - 1, Math.floor((y / height) * rows));
     for (let x = 0; x < stride; x += channels) {
-      sum += 0.299 * (line[x] ?? 0) + 0.587 * (line[x + 1] ?? 0) + 0.114 * (line[x + 2] ?? 0);
+      const col = Math.min(cols - 1, Math.floor((x / channels / width) * cols));
+      const cell = row * cols + col;
+      sums[cell] =
+        (sums[cell] ?? 0) +
+        0.299 * (line[x] ?? 0) +
+        0.587 * (line[x + 1] ?? 0) +
+        0.114 * (line[x + 2] ?? 0);
+      counts[cell] = (counts[cell] ?? 0) + 1;
     }
     prev = line;
   }
-  return sum / (width * height);
+  return sums.map((v, i) => v / Math.max(1, counts[i] ?? 0));
 }

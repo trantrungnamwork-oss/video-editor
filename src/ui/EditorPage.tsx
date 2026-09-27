@@ -7,10 +7,12 @@ import type { PreviewPlayer } from '../media/preview/previewPlayer';
 import type { SequenceClip } from '../media/preview/sequence';
 import { DEFAULT_TEST_CLIP, parseTestClipSpec } from '../media/testClip';
 import { requestTestClip } from '../media/testClipClient';
-import { EMPTY_PROJECT } from '../core/project';
+import { frameSize } from '../core/frame';
+import { aspectOf, EMPTY_PROJECT } from '../core/project';
 import { useMediaStore } from '../state/mediaStore';
 import { persistChanges } from '../state/persistence';
 import { autoAddImportedMedia, useProjectStore } from '../state/projectStore';
+import { AspectPicker } from './AspectPicker';
 import { ExportDialog } from './export/ExportDialog';
 import { MediaCard } from './MediaCard';
 import { PreviewPanel } from './preview/PreviewPanel';
@@ -66,20 +68,29 @@ export function EditorPage() {
           frameRate: it.info.video.frameRate,
           hasAudio: it.info.audio?.decode.status === 'supported',
           audio: c.audio,
+          layout: c.layout,
         };
       }),
     [project, readyById],
   );
 
-  // Output frame follows the first clip's display size (letterboxing the others).
+  // Output frame: the project's aspect ratio around the first clip's display size.
   const first = sequence[0] ? readyById.get(sequence[0].mediaId)?.info.video : undefined;
+  const frame = first
+    ? frameSize(aspectOf(project), first.displayWidth, first.displayHeight)
+    : null;
+  // Copying the streams keeps the source frame; a reshaped frame must be re-encoded.
+  const copyBlocked =
+    first && frame && (frame.width !== first.displayWidth || frame.height !== first.displayHeight)
+      ? 'The frame shape was changed, which needs re-encoding'
+      : null;
   const missingCount = items.filter((it) => it.status === 'missing').length;
   // Export needs every clip's file; after a reload some may still be waiting for relink.
   const complete = project.clips.length > 0 && sequence.length === project.clips.length;
 
   const exportClips = useMemo<CopyClip[]>(
     () =>
-      sequence.map(({ id, mediaId, file, inSec, outSec, hasAudio, audio }) => ({
+      sequence.map(({ id, mediaId, file, inSec, outSec, hasAudio, audio, layout }) => ({
         clipId: id,
         mediaId,
         file,
@@ -87,6 +98,7 @@ export function EditorPage() {
         outSec,
         hasAudio,
         ...(audio ? { audio } : {}),
+        ...(layout ? { layout } : {}),
       })),
     [sequence],
   );
@@ -143,13 +155,14 @@ export function EditorPage() {
           </button>
         </div>
       </header>
-      {exporting && first && (
+      {exporting && first && frame && (
         <ExportDialog
           clips={exportClips}
           durationSec={sequence.reduce((d, c) => d + c.outSec - c.inSec, 0)}
-          sourceWidth={first.displayWidth}
-          sourceHeight={first.displayHeight}
+          sourceWidth={frame.width}
+          sourceHeight={frame.height}
           fps={first.frameRate ?? 30}
+          copyBlocked={copyBlocked}
           resumeFrom={exporting === 'resume' ? pending : null}
           onSnapCuts={(snaps) => useProjectStore.getState().setCuts(snaps)}
           onClose={() => {
@@ -222,13 +235,16 @@ export function EditorPage() {
 
       {project.clips.length > 0 ? (
         <>
-          {first && complete ? (
-            <PreviewPanel
-              clips={sequence}
-              width={first.displayWidth}
-              height={first.displayHeight}
-              onPlayer={setPlayer}
-            />
+          {frame && complete ? (
+            <>
+              <PreviewPanel
+                clips={sequence}
+                width={frame.width}
+                height={frame.height}
+                onPlayer={setPlayer}
+              />
+              <AspectPicker />
+            </>
           ) : (
             <p className="rounded-lg bg-neutral-900 p-6 text-center text-neutral-400">
               Preview is available once all videos of the project are selected again.

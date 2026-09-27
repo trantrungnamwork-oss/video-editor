@@ -1,3 +1,5 @@
+import { DEFAULT_LAYOUT, type AspectRatio, type ClipLayout } from './frame';
+
 /**
  * Project model: a single video track of clips played back to back.
  *
@@ -37,11 +39,15 @@ export interface Clip {
   inSec: number;
   outSec: number;
   audio?: ClipAudio;
+  /** Placement in the output frame; absent means DEFAULT_LAYOUT (whole picture, centred). */
+  layout?: ClipLayout;
 }
 
 export interface Project {
   readonly clips: readonly Clip[];
   readonly media: Readonly<Record<string, MediaSource>>;
+  /** Output frame shape; absent means 'source' (the first clip's shape). */
+  readonly aspect?: AspectRatio;
 }
 
 export const EMPTY_PROJECT: Project = { clips: [], media: {} };
@@ -122,7 +128,7 @@ export function addClip(
   };
   const clips = [...p.clips];
   clips.splice(clamp(opts.index ?? clips.length, 0, clips.length), 0, clip);
-  return { clips, media: { ...p.media, [media.id]: media } };
+  return { ...p, clips, media: { ...p.media, [media.id]: media } };
 }
 
 function replaceClip(p: Project, clipId: string, update: (c: Clip) => Clip): Project {
@@ -130,7 +136,12 @@ function replaceClip(p: Project, clipId: string, update: (c: Clip) => Clip): Pro
   const clips = p.clips.map((c) => {
     if (c.id !== clipId) return c;
     const next = update(c);
-    if (next.inSec !== c.inSec || next.outSec !== c.outSec || !sameAudio(next.audio, c.audio)) {
+    if (
+      next.inSec !== c.inSec ||
+      next.outSec !== c.outSec ||
+      !sameAudio(next.audio, c.audio) ||
+      !sameLayout(next.layout, c.layout)
+    ) {
       changed = true;
     }
     return next;
@@ -238,5 +249,43 @@ const round3 = (v: number) => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 
 export function removeMedia(p: Project, mediaId: string): Project {
   if (!(mediaId in p.media)) return p;
   const media = Object.fromEntries(Object.entries(p.media).filter(([id]) => id !== mediaId));
-  return { clips: p.clips.filter((c) => c.mediaId !== mediaId), media };
+  return { ...p, clips: p.clips.filter((c) => c.mediaId !== mediaId), media };
+}
+
+export const aspectOf = (p: Project): AspectRatio => p.aspect ?? 'source';
+
+export function setAspect(p: Project, aspect: AspectRatio): Project {
+  if (aspectOf(p) === aspect) return p;
+  if (aspect === 'source') {
+    const rest = { ...p };
+    delete rest.aspect;
+    return rest;
+  }
+  return { ...p, aspect };
+}
+
+export const layoutOf = (c: Clip): ClipLayout => c.layout ?? DEFAULT_LAYOUT;
+
+function sameLayout(a: ClipLayout | undefined, b: ClipLayout | undefined): boolean {
+  const x = a ?? DEFAULT_LAYOUT;
+  const y = b ?? DEFAULT_LAYOUT;
+  return x.fit === y.fit && x.panX === y.panX && x.panY === y.panY;
+}
+
+/** Updates how a clip sits in the frame; pan is clamped to [-1, 1]. */
+export function setClipLayout(p: Project, clipId: string, patch: Partial<ClipLayout>): Project {
+  return replaceClip(p, clipId, (c) => {
+    const merged = { ...layoutOf(c), ...patch };
+    const layout: ClipLayout = {
+      fit: merged.fit,
+      panX: clamp(round3(merged.panX), -1, 1),
+      panY: clamp(round3(merged.panY), -1, 1),
+    };
+    if (sameLayout(layout, DEFAULT_LAYOUT)) {
+      const rest = { ...c };
+      delete rest.layout;
+      return rest;
+    }
+    return { ...c, layout };
+  });
 }

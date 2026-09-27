@@ -21,6 +21,7 @@ import {
   type StreamTargetChunk,
   type AudioSampleSource,
 } from 'mediabunny';
+import type { ClipLayout } from '../../core/frame';
 import { MIN_CLIP_SEC, type ClipAudio } from '../../core/project';
 import { SUPPORTED_INPUT_FORMATS } from '../probe';
 import { schedule, type ScheduledClip } from '../preview/sequence';
@@ -34,6 +35,7 @@ export interface CopyClip {
   outSec: number;
   hasAudio: boolean;
   audio?: ClipAudio | undefined;
+  layout?: ClipLayout | undefined;
 }
 
 /** Moves a clip's cut points onto keyframes so the timeline becomes copyable. */

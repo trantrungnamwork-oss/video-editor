@@ -1,6 +1,7 @@
 /**
  * Timeline ↔ source mapping for sequence playback. Pure; shared by the worker session and tests.
  */
+import type { ClipLayout } from '../../core/frame';
 import type { ClipAudio } from '../../core/project';
 
 export interface SequenceClip {
@@ -15,6 +16,8 @@ export interface SequenceClip {
   hasAudio: boolean;
   /** Identifies the File handle across the worker boundary (set by PreviewPlayer). */
   fileToken?: number;
+  /** Placement in the output frame; absent means the whole picture, centred. */
+  layout?: ClipLayout | undefined;
   /** Volume, mute and fades; absent means unchanged audio. */
   audio?: ClipAudio | undefined;
 }
