@@ -13,8 +13,6 @@
  * back-pressure on `add`) and every output streams to disk.
  */
 import {
-  AudioSample,
-  AudioSampleSink,
   AudioSampleSource,
   BlobSource,
   EncodedAudioPacketSource,
@@ -30,19 +28,13 @@ import {
   type StreamTargetChunk,
 } from 'mediabunny';
 import { SUPPORTED_INPUT_FORMATS } from '../probe';
-import { audioWindow, schedule, timelineTime, type ScheduledClip } from '../preview/sequence';
-import {
-  AUDIO_BITRATE,
-  AUDIO_CHANNELS,
-  AUDIO_SAMPLE_RATE,
-  KEYFRAME_INTERVAL_SEC,
-  type Format,
-} from './plan';
-import { applyGain, isSilent } from '../../core/audioGain';
+import { schedule, timelineTime, type ScheduledClip } from '../preview/sequence';
+import { AUDIO_BITRATE, KEYFRAME_INTERVAL_SEC, type Format } from './plan';
 import type { ClipLayout } from '../../core/frame';
-import type { ClipAudio } from '../../core/project';
+import type { AudioItem, ClipAudio } from '../../core/project';
+import { NO_MIX, type AudioMix } from '../audioMix';
+import { encodeAudio } from './audioMixer';
 import { drawFrame } from '../render/compositor';
-import { concatPlanes, Resampler } from './resample';
 import {
   identityOf,
   jobKey,
@@ -74,7 +66,20 @@ export interface ExportSettings {
 
 export interface ExportJob extends ExportSettings {
   clips: ExportClip[];
+  /** Music and voice-over mixed in (absent: none). */
+  mix?: AudioMix | undefined;
 }
+
+/** A job's audio items as stored in a checkpoint (file identities, not files). */
+export interface CheckpointMix {
+  audioItems: (AudioItem & { file: FileIdentity })[];
+  duck: boolean;
+}
+
+export const checkpointMix = (mix: AudioMix | undefined): CheckpointMix => ({
+  audioItems: (mix ?? NO_MIX).audioItems.map((a) => ({ ...a, file: identityOf(a.file) })),
+  duck: (mix ?? NO_MIX).duck,
+});
 
 export interface ExportProgress {
   fraction: number;
@@ -93,6 +98,7 @@ export interface Checkpoint {
     audio?: ClipAudio | undefined;
     layout?: ClipLayout | undefined;
   }[];
+  mix?: CheckpointMix;
   totalSec: number;
   audioDone: boolean;
   segmentsDone: number;
@@ -126,7 +132,6 @@ export class ExportInterrupted extends Error {
   }
 }
 
-const SILENCE_CHUNK_FRAMES = 4096;
 const ext = (f: Format) => f.container;
 const segName = (s: Segment, f: Format) => `seg-${String(s.index).padStart(4, '0')}.${ext(f)}`;
 
@@ -142,10 +147,12 @@ export function checkpointFor(job: ExportJob): Checkpoint {
   }));
   const totalSec = clips.reduce((t, c) => t + c.outSec - c.inSec, 0);
   const { width, height, format, videoBitrate, fileName } = job;
+  const mix = checkpointMix(job.mix);
   return {
-    key: jobKey({ ...job, clips }),
+    key: jobKey({ ...job, clips, mix }),
     settings: { width, height, format, videoBitrate, fileName },
     clips,
+    mix,
     totalSec,
     audioDone: false,
     segmentsDone: 0,
@@ -176,7 +183,7 @@ export async function runExport(
     cp = fresh;
     await store.writeCheckpoint(cp);
   }
-  const withAudio = seq.some((c) => c.hasAudio);
+  const withAudio = seq.some((c) => c.hasAudio) || (job.mix?.audioItems.length ?? 0) > 0;
   const segments = planSegments(cp.totalSec);
   const progress = {
     audio: cp.audioDone || !withAudio ? 1 : 0,
@@ -343,7 +350,10 @@ async function encodeAudioFile(
     `audio.${ext(job.format)}`,
     job.format,
     (o) => o.addAudioTrack(source),
-    () => encodeAudio(seq, source, check, (t) => progress(total > 0 ? t / total : 1)),
+    () =>
+      encodeAudio(seq, job.mix ?? NO_MIX, source, check, (t) =>
+        progress(total > 0 ? t / total : 1),
+      ),
   );
 }
 
@@ -357,109 +367,7 @@ export function audioSource(codec: 'aac' | 'opus'): AudioSampleSource {
   });
 }
 
-/** Decodes the timeline's audio (silence for gaps) into `source`, retimed to the timeline. */
-export async function encodeAudio(
-  seq: ScheduledClip[],
-  source: AudioSampleSource,
-  check: () => void,
-  progress: (t: number) => void,
-) {
-  /** Timeline time up to which audio has been written; gaps are filled with silence. */
-  let written = 0;
-  const silenceUntil = async (t: number) => {
-    while (t - written > 1e-4) {
-      check();
-      const frames = Math.min(SILENCE_CHUNK_FRAMES, Math.round((t - written) * AUDIO_SAMPLE_RATE));
-      if (frames <= 0) break;
-      const s = new AudioSample({
-        data: new Float32Array(frames * AUDIO_CHANNELS),
-        format: 'f32-planar',
-        numberOfChannels: AUDIO_CHANNELS,
-        sampleRate: AUDIO_SAMPLE_RATE,
-        timestamp: written,
-      });
-      try {
-        await source.add(s);
-      } finally {
-        s.close();
-      }
-      written += frames / AUDIO_SAMPLE_RATE;
-    }
-  };
-
-  for (const clip of seq) {
-    check();
-    if (clip.hasAudio && !isSilent(clip.audio)) {
-      const input = openClip(clip.file);
-      try {
-        const track = await input.getPrimaryAudioTrack();
-        let resampler: Resampler | null = null;
-        if (track) {
-          for await (const sample of new AudioSampleSink(track).samples(clip.inSec, clip.outSec)) {
-            try {
-              check();
-              const win = audioWindow(
-                sample.timestamp,
-                sample.numberOfFrames,
-                sample.sampleRate,
-                clip.inSec,
-                clip.outSec,
-              );
-              if (!win) continue;
-              const ts = timelineTime(clip, sample.timestamp + win.offset / sample.sampleRate);
-              await silenceUntil(ts); // tiny gaps between packets or a late first packet
-              // Convert to the one format the encoder accepts: 48 kHz stereo planar float.
-              if (!resampler || resampler.inRate !== sample.sampleRate) {
-                resampler = new Resampler(sample.sampleRate, AUDIO_SAMPLE_RATE, AUDIO_CHANNELS);
-              }
-              const planes = Array.from({ length: sample.numberOfChannels }, (_, c) => {
-                const plane = new Float32Array(win.count);
-                sample.copyTo(plane, {
-                  planeIndex: c,
-                  format: 'f32-planar',
-                  frameOffset: win.offset,
-                  frameCount: win.count,
-                });
-                return plane;
-              });
-              applyGain(
-                planes,
-                sample.sampleRate,
-                ts - clip.startSec,
-                clip.endSec - clip.startSec,
-                clip.audio,
-              );
-              const out = resampler.process(planes);
-              const frames = out[0]?.length ?? 0;
-              if (frames === 0) continue;
-              const conformed = new AudioSample({
-                data: concatPlanes(out),
-                format: 'f32-planar',
-                numberOfChannels: AUDIO_CHANNELS,
-                sampleRate: AUDIO_SAMPLE_RATE,
-                timestamp: Math.max(ts, written),
-              });
-              try {
-                await source.add(conformed);
-                written = Math.max(ts, written) + frames / AUDIO_SAMPLE_RATE;
-                progress(written);
-              } finally {
-                conformed.close();
-              }
-            } finally {
-              sample.close();
-            }
-          }
-        }
-      } finally {
-        input.dispose();
-      }
-    }
-    // Clips without audio (or whose audio ends early) become silence.
-    await silenceUntil(clip.endSec);
-    progress(written);
-  }
-}
+export { encodeAudio };
 
 async function mux(
   format: Format,

@@ -25,6 +25,7 @@ import type { ClipLayout } from '../../core/frame';
 import { MIN_CLIP_SEC, type ClipAudio } from '../../core/project';
 import { SUPPORTED_INPUT_FORMATS } from '../probe';
 import { schedule, type ScheduledClip } from '../preview/sequence';
+import type { AudioMix } from '../audioMix';
 import type { Container } from './plan';
 
 export interface CopyClip {
@@ -288,6 +289,8 @@ export interface CopyJob {
   videoCodec: string;
   rotation: Rotation;
   fileName: string;
+  /** Music and voice-over mixed into the re-encoded audio. */
+  mix?: AudioMix | undefined;
 }
 
 /**

@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CopyClip } from '../media/export/copyExport';
-import type { Checkpoint } from '../media/export/exportPipeline';
+import { checkpointMix, type Checkpoint } from '../media/export/exportPipeline';
 import { discardPendingExport, readPendingCheckpoint } from '../media/export/opfsFile';
 import { identityOf, jobKey } from '../media/export/segments';
 import type { PreviewPlayer } from '../media/preview/previewPlayer';
 import type { SequenceClip } from '../media/preview/sequence';
 import { DEFAULT_TEST_CLIP, parseTestClipSpec } from '../media/testClip';
 import { requestTestClip } from '../media/testClipClient';
+import { audioItemsOf, duckOn } from '../core/audioTrack';
 import { frameSize } from '../core/frame';
+import type { AudioMix } from '../media/audioMix';
 import { aspectOf, EMPTY_PROJECT, layoutOf } from '../core/project';
 import { useMediaStore } from '../state/mediaStore';
 import { persistChanges } from '../state/persistence';
 import { autoAddImportedMedia, useProjectStore } from '../state/projectStore';
 import { AspectPicker } from './AspectPicker';
+import { AudioButtons } from './AudioButtons';
 import { ExportDialog } from './export/ExportDialog';
 import { MediaCard } from './MediaCard';
 import { PreviewPanel } from './preview/PreviewPanel';
@@ -65,7 +68,7 @@ export function EditorPage() {
           file: it.file,
           inSec: c.inSec,
           outSec: c.outSec,
-          frameRate: it.info.video.frameRate,
+          frameRate: it.info.video?.frameRate ?? null,
           hasAudio: it.info.audio?.decode.status === 'supported',
           audio: c.audio,
           layout: layoutOf(project, c),
@@ -75,7 +78,9 @@ export function EditorPage() {
   );
 
   // Output frame: the project's aspect ratio around the first clip's display size.
-  const first = sequence[0] ? readyById.get(sequence[0].mediaId)?.info.video : undefined;
+  const first = sequence[0]
+    ? (readyById.get(sequence[0].mediaId)?.info.video ?? undefined)
+    : undefined;
   const frame = first
     ? frameSize(aspectOf(project), first.displayWidth, first.displayHeight)
     : null;
@@ -86,7 +91,18 @@ export function EditorPage() {
       : null;
   const missingCount = items.filter((it) => it.status === 'missing').length;
   // Export needs every clip's file; after a reload some may still be waiting for relink.
-  const complete = project.clips.length > 0 && sequence.length === project.clips.length;
+  // Music and voice-over with their files (items whose file is still missing wait for relink).
+  const mix = useMemo<AudioMix>(() => {
+    const audioItems = audioItemsOf(project).flatMap((a) => {
+      const it = readyById.get(a.mediaId);
+      return it ? [{ ...a, file: it.file }] : [];
+    });
+    return { audioItems, duck: duckOn(project) };
+  }, [project, readyById]);
+  const complete =
+    project.clips.length > 0 &&
+    sequence.length === project.clips.length &&
+    mix.audioItems.length === audioItemsOf(project).length;
 
   const exportClips = useMemo<CopyClip[]>(
     () =>
@@ -108,6 +124,7 @@ export function EditorPage() {
     jobKey({
       ...pending.settings,
       clips: exportClips.map((c) => ({ ...c, file: identityOf(c.file) })),
+      mix: checkpointMix(mix),
     }) === pending.key;
 
   /** Clears the timeline, the library and any unfinished export (after a confirmation). */
@@ -158,6 +175,7 @@ export function EditorPage() {
       {exporting && first && frame && (
         <ExportDialog
           clips={exportClips}
+          mix={mix}
           durationSec={sequence.reduce((d, c) => d + c.outSec - c.inSec, 0)}
           sourceWidth={frame.width}
           sourceHeight={frame.height}
@@ -239,11 +257,13 @@ export function EditorPage() {
             <>
               <PreviewPanel
                 clips={sequence}
+                mix={mix}
                 width={frame.width}
                 height={frame.height}
                 onPlayer={setPlayer}
               />
               <AspectPicker />
+              <AudioButtons player={player} />
             </>
           ) : (
             <p className="rounded-lg bg-neutral-900 p-6 text-center text-neutral-400">

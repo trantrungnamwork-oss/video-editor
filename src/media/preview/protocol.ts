@@ -1,9 +1,10 @@
 /** Messages between PreviewPlayer (main thread) and preview.worker.ts. */
+import type { AudioMix } from '../audioMix';
 import type { SequenceClip } from './sequence';
 
 export type ToWorker =
   | { type: 'init'; canvas: OffscreenCanvas }
-  | { type: 'set-sequence'; clips: SequenceClip[] }
+  | { type: 'set-sequence'; clips: SequenceClip[]; mix: AudioMix }
   | { type: 'resize'; width: number; height: number }
   | { type: 'play'; t: number; playId: number }
   | { type: 'pause' }

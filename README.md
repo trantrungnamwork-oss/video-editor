@@ -28,6 +28,9 @@ The selected clip's volume (0–200 %), mute and fade-in/out are set under the t
 The frame shape (original, 16:9, 9:16, 1:1, 4:5) is picked under the preview; clips fill it
 (cropped) by default, or Fit it (bars) — for all clips next to the shapes, or per clip in its
 panel with position sliders.
+**Add music** (your audio files or three built-in loops generated on the device) plays from the
+start and repeats to the end; **Record voice** records from the playhead while the video plays
+muted, and the music dips under it. Both sit on their own rows under the clips.
 **Export → Original** copies the video without re-encoding (lossless, fast) when all cuts are on
 keyframes; the dialog offers to snap the cuts that aren't. Otherwise **Export** encodes the timeline
 on the device (MP4 H.264/AAC, or WebM VP9/Opus where MP4 is not

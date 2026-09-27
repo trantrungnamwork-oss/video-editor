@@ -6,12 +6,17 @@
  * so the file is never loaded into memory as a whole (CLAUDE.md §3.2).
  */
 import {
+  ADTS,
   BlobSource,
+  FLAC,
   Input,
   MATROSKA,
+  MP3,
   MP4,
   MPEG_TS,
+  OGG,
   QTFF,
+  WAVE,
   WEBM,
   type InputAudioTrack,
   type InputVideoTrack,
@@ -23,7 +28,18 @@ import { probeConfig, PROBE_TIMEOUT_MS, type ConfigProber, type ProbeResult } fr
  * (.ts/.mts/.m2ts from camcorders and some apps). Anything else is refused with a clear message;
  * see TL-006 for why there is no FFmpeg.wasm fallback.
  */
-export const SUPPORTED_INPUT_FORMATS = [MP4, QTFF, WEBM, MATROSKA, MPEG_TS];
+export const SUPPORTED_INPUT_FORMATS = [
+  MP4,
+  QTFF,
+  WEBM,
+  MATROSKA,
+  MPEG_TS,
+  MP3,
+  WAVE,
+  OGG,
+  ADTS,
+  FLAC,
+];
 
 /** Enough to cover a moov/cues lookup without holding large chunks of the file. */
 const SOURCE_CACHE_BYTES = 4 * 1024 * 1024;
@@ -84,10 +100,12 @@ export interface MediaInfo {
   container: string;
   mimeType: string;
   durationSec: number;
-  video: VideoStreamInfo;
+  /** 'audio': an audio-only file (music, voice-over); it goes on the audio rows, not the clips. */
+  kind: 'video' | 'audio';
+  video: VideoStreamInfo | null;
   audio: AudioStreamInfo | null;
   warnings: MediaWarning[];
-  /** False when the video track cannot be decoded on this device; the clip is unusable. */
+  /** False when the main stream (video, or audio for audio-only files) can't be decoded here. */
   canDecode: boolean;
 }
 
@@ -118,24 +136,26 @@ export async function probeMedia(
       throw new MediaProbeError('unsupported-format', 'Unrecognised or unsupported container');
     }
     const videoTrack = await input.getPrimaryVideoTrack();
-    if (!videoTrack) throw new MediaProbeError('no-video-track', 'File has no video track');
     const audioTrack = await input.getPrimaryAudioTrack();
+    if (!videoTrack && !audioTrack) {
+      throw new MediaProbeError('no-video-track', 'File has no video or audio track');
+    }
     const timeoutMs = env.timeoutMs ?? PROBE_TIMEOUT_MS;
 
     const [format, mimeType, durationSec, video, audio] = await Promise.all([
       input.getFormat(),
       input.getMimeType(),
       input.computeDuration(),
-      describeVideo(videoTrack, env, timeoutMs),
+      videoTrack ? describeVideo(videoTrack, env, timeoutMs) : Promise.resolve(null),
       audioTrack ? describeAudio(audioTrack, env, timeoutMs) : Promise.resolve(null),
     ]);
 
     const warnings: MediaWarning[] = [];
-    if (video.decode.status !== 'supported') warnings.push('video-undecodable');
+    if (video && video.decode.status !== 'supported') warnings.push('video-undecodable');
     if (!audio) warnings.push('no-audio');
     else if (audio.decode.status !== 'supported') warnings.push('audio-undecodable');
-    if (video.hdr) warnings.push('hdr');
-    if (video.isVariableFrameRate) warnings.push('variable-frame-rate');
+    if (video?.hdr) warnings.push('hdr');
+    if (video?.isVariableFrameRate) warnings.push('variable-frame-rate');
 
     return {
       name,
@@ -143,10 +163,11 @@ export async function probeMedia(
       container: format.name,
       mimeType,
       durationSec,
+      kind: video ? 'video' : 'audio',
       video,
       audio,
       warnings,
-      canDecode: video.decode.status === 'supported',
+      canDecode: (video ?? audio)?.decode.status === 'supported',
     };
   } catch (err) {
     if (err instanceof MediaProbeError) throw err;

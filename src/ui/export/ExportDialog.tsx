@@ -11,10 +11,13 @@ import {
   type PresetPlan,
 } from '../../media/export/plan';
 import { formatBytes, formatDuration } from '../format';
+import type { AudioMix } from '../../media/audioMix';
 import { useWakeLock } from './useWakeLock';
 
 interface Props {
   clips: CopyClip[];
+  /** Music and voice-over. */
+  mix: AudioMix;
   durationSec: number;
   sourceWidth: number;
   sourceHeight: number;
@@ -170,7 +173,10 @@ export function ExportDialog(props: Props) {
     if (resumeFrom) {
       stalls.current = { count: 0, lastFraction: resumedFraction(resumeFrom) };
       startedAtRef.current = performance.now();
-      launch({ kind: 'encode', job: { ...resumeFrom.settings, clips: props.clips } }, true);
+      launch(
+        { kind: 'encode', job: { ...resumeFrom.settings, clips: props.clips, mix: props.mix } },
+        true,
+      );
       return;
     }
     let alive = true;
@@ -231,6 +237,7 @@ export function ExportDialog(props: Props) {
           kind: 'copy',
           job: {
             clips: props.clips,
+            mix: props.mix,
             container: original.container,
             videoCodec: original.videoCodec,
             rotation: original.rotation,
@@ -248,6 +255,7 @@ export function ExportDialog(props: Props) {
         kind: 'encode',
         job: {
           clips: props.clips,
+          mix: props.mix,
           width: chosen.width,
           height: chosen.height,
           format: chosen.format,

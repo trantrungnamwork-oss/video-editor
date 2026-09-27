@@ -74,7 +74,9 @@ export async function runBenchmark(
       hasAudio: info.audio?.decode.status === 'supported',
     };
     const results: BenchResult[] = [];
-    const { displayWidth: w, displayHeight: h, frameRate } = info.video;
+    if (!info.video) throw new Error(`${file.name} has no video`);
+    const video = info.video;
+    const { displayWidth: w, displayHeight: h, frameRate } = video;
 
     // Re-encode at 1080p (or the best preset this device can encode).
     const plans = await client.plan(w, h, frameRate ?? 30);
@@ -148,7 +150,7 @@ export async function runBenchmark(
       userAgent: navigator.userAgent,
       hardwareConcurrency: navigator.hardwareConcurrency ?? null,
       deviceMemoryGB: nav.deviceMemory ?? null,
-      source: { name: file.name, width: w, height: h, fps: frameRate, video: info.video.codec },
+      source: { name: file.name, width: w, height: h, fps: frameRate, video: video.codec },
       results,
     };
   } finally {

@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { PreviewPlayer, type PlayerSnapshot } from '../../media/preview/previewPlayer';
+import type { AudioMix } from '../../media/audioMix';
 import type { SequenceClip } from '../../media/preview/sequence';
 import { PlayerControls } from './PlayerControls';
 import { StatsPanel } from './StatsPanel';
 
 interface Props {
   clips: SequenceClip[];
+  mix: AudioMix;
   /** Output frame size (project aspect around the first clip); the preview has its shape. */
   width: number;
   height: number;
   onPlayer: (player: PreviewPlayer | null) => void;
 }
 
-export function PreviewPanel({ clips, width, height, onPlayer }: Props) {
+export function PreviewPanel({ clips, mix, width, height, onPlayer }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [player, setPlayer] = useState<PreviewPlayer | null>(null);
   const [snapshot, setSnapshot] = useState<PlayerSnapshot | null>(null);
@@ -47,8 +49,8 @@ export function PreviewPanel({ clips, width, height, onPlayer }: Props) {
   }, [onPlayer]);
 
   useEffect(() => {
-    player?.setSequence(clips);
-  }, [player, clips]);
+    player?.setSequence(clips, mix);
+  }, [player, clips, mix]);
 
   useEffect(() => {
     const container = containerRef.current;

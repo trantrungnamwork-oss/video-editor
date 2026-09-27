@@ -50,6 +50,29 @@ export interface Project {
   readonly aspect?: AspectRatio;
   /** Fit for clips without their own; absent means DEFAULT_FIT. */
   readonly fit?: Fit;
+  /** Music and voice-over on their own rows, mixed with the clips' sound (core/audioTrack.ts). */
+  readonly audioItems?: readonly AudioItem[];
+  /** Lower the music while a voice-over plays; absent means on. */
+  readonly duck?: boolean;
+}
+
+export type AudioKind = 'music' | 'voice';
+
+/** A stretch of an audio file placed on the timeline. */
+export interface AudioItem {
+  id: string;
+  mediaId: string;
+  kind: AudioKind;
+  /** Timeline time where it starts. */
+  startSec: number;
+  /** Length on the timeline; null = until the end of the video. */
+  durationSec: number | null;
+  /** Source range of one pass. */
+  inSec: number;
+  outSec: number;
+  /** Repeat the source range to fill the length (music). */
+  loop: boolean;
+  audio?: ClipAudio;
 }
 
 /** Stored per-clip framing: an optional fit override and the crop position. */
@@ -256,9 +279,14 @@ const round3 = (v: number) => (Number.isFinite(v) ? Math.round(v * 1000) / 1000 
 
 /** Drops a media source and every clip that uses it. */
 export function removeMedia(p: Project, mediaId: string): Project {
-  if (!(mediaId in p.media)) return p;
+  if (!(mediaId in p.media) && !p.audioItems?.some((a) => a.mediaId === mediaId)) return p;
   const media = Object.fromEntries(Object.entries(p.media).filter(([id]) => id !== mediaId));
-  return { ...p, clips: p.clips.filter((c) => c.mediaId !== mediaId), media };
+  const clips = p.clips.filter((c) => c.mediaId !== mediaId);
+  const next: Project = { ...p, clips, media };
+  if (p.audioItems) {
+    return { ...next, audioItems: p.audioItems.filter((a) => a.mediaId !== mediaId) };
+  }
+  return next;
 }
 
 export const aspectOf = (p: Project): AspectRatio => p.aspect ?? 'source';

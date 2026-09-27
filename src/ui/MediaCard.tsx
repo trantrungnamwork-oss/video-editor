@@ -19,9 +19,13 @@ const ERROR_LABELS = {
 export function MediaCard({ item }: { item: MediaItem }) {
   const removeItem = useMediaStore((s) => s.remove);
   const addToTimeline = useProjectStore((s) => s.addMedia);
-  const usedInTimeline = useProjectStore((s) =>
-    s.history.present.clips.some((c) => c.mediaId === item.id),
+  const usedInTimeline = useProjectStore(
+    (s) =>
+      s.history.present.clips.some((c) => c.mediaId === item.id) ||
+      !!s.history.present.audioItems?.some((a) => a.mediaId === item.id),
   );
+  const isAudio =
+    item.status !== 'probing' && item.status !== 'error' && item.info.kind === 'audio';
   const addable = item.status === 'ready' && item.info.canDecode;
   const name = itemName(item);
   const remove = () => {
@@ -46,11 +50,15 @@ export function MediaCard({ item }: { item: MediaItem }) {
         {addable && (
           <button
             type="button"
-            onClick={() => addToTimeline(mediaSourceOf(item.id, item.info))}
+            onClick={() =>
+              isAudio
+                ? useProjectStore.getState().addAudio(mediaSourceOf(item.id, item.info), 'music', 0)
+                : addToTimeline(mediaSourceOf(item.id, item.info))
+            }
             className="flex min-h-11 shrink-0 items-center rounded-lg bg-neutral-800 px-3 text-sm font-medium active:bg-neutral-700"
             aria-label={`Add ${name} to timeline`}
           >
-            {usedInTimeline ? '+ Again' : '+ Add'}
+            {isAudio ? '+ Music' : usedInTimeline ? '+ Again' : '+ Add'}
           </button>
         )}
         <button
@@ -95,20 +103,33 @@ function MediaDetails({ info }: { info: Extract<MediaItem, { status: 'ready' }>[
     <>
       {!info.canDecode && (
         <p className="mt-2 rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
-          This device can&apos;t decode {videoCodecLabel(video.codec)} video
-          {video.codecString ? ` (${video.codecString})` : ''} at {video.codedWidth}×
-          {video.codedHeight}. This clip can&apos;t be edited here.
+          {video ? (
+            <>
+              This device can&apos;t decode {videoCodecLabel(video.codec)} video
+              {video.codecString ? ` (${video.codecString})` : ''} at {video.codedWidth}×
+              {video.codedHeight}. This clip can&apos;t be edited here.
+            </>
+          ) : (
+            <>
+              This device can&apos;t decode {audioCodecLabel(audio?.codec ?? null)} audio. This file
+              can&apos;t be used here.
+            </>
+          )}
         </p>
       )}
 
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
         <Field label="Duration" value={formatDuration(info.durationSec)} />
-        <Field label="Resolution" value={`${video.displayWidth}×${video.displayHeight}`} />
-        <Field
-          label="Frame rate"
-          value={`${video.isVariableFrameRate ? '~' : ''}${formatFps(video.frameRate)} fps`}
-        />
-        <Field label="Video" value={videoCodecLabel(video.codec)} title={video.codecString} />
+        {video && (
+          <>
+            <Field label="Resolution" value={`${video.displayWidth}×${video.displayHeight}`} />
+            <Field
+              label="Frame rate"
+              value={`${video.isVariableFrameRate ? '~' : ''}${formatFps(video.frameRate)} fps`}
+            />
+            <Field label="Video" value={videoCodecLabel(video.codec)} title={video.codecString} />
+          </>
+        )}
         <Field
           label="Audio"
           value={

@@ -25,7 +25,10 @@ export class AudioScheduler {
   /** Media time up to which audio has been scheduled. */
   scheduledUntil = 0;
 
-  constructor(private readonly ctx: AudioContextLike) {}
+  constructor(
+    private readonly ctx: AudioContextLike,
+    private readonly output: AudioNode = ctx.destination,
+  ) {}
 
   /** Anchors media time `mediaT0` to context time `ctxT0` (slightly in the future). */
   start(mediaT0: number, ctxT0: number): void {
@@ -56,7 +59,7 @@ export class AudioScheduler {
     chunk.channels.forEach((data, c) => buffer.copyToChannel(data as Float32Array<ArrayBuffer>, c));
     const node = this.ctx.createBufferSource();
     node.buffer = buffer;
-    node.connect(this.ctx.destination);
+    node.connect(this.output);
     node.onended = () => this.nodes.delete(node);
     node.start(when, offset);
     this.nodes.add(node);

@@ -7,6 +7,7 @@
  * (AudioScheduler); gaps without audio still advance because the AudioContext clock keeps
  * running. Otherwise it follows performance.now().
  */
+import { NO_MIX, type AudioMix } from '../audioMix';
 import { AudioScheduler } from './audioScheduler';
 import type { FromWorker, ToWorker, WorkerStats } from './protocol';
 import {
@@ -48,6 +49,8 @@ export class PreviewPlayer {
 
   private audioCtx: AudioContext | null = null;
   private audio: AudioScheduler | null = null;
+  private gain: GainNode | null = null;
+  private muted = false;
   private playId = 0;
   private perfT0 = 0;
   private mediaT0 = 0;
@@ -85,6 +88,12 @@ export class PreviewPlayer {
     return t;
   }
 
+  /** Silences playback (e.g. while recording a voice-over, so the mic doesn't pick it up). */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+    if (this.gain) this.gain.gain.value = muted ? 0 : 1;
+  }
+
   get state(): PlayerSnapshot {
     return this.snapshot;
   }
@@ -112,7 +121,7 @@ export class PreviewPlayer {
    * Replaces the clip list (after any edit). Keeps the playhead where it was, clamped to the new
    * duration, and resumes playback if it was playing.
    */
-  setSequence(clips: SequenceClip[]): void {
+  setSequence(clips: SequenceClip[], mix: AudioMix = NO_MIX): void {
     const wasPlaying = this.snapshot.playing;
     const t = this.currentTime;
     if (wasPlaying) {
@@ -124,8 +133,12 @@ export class PreviewPlayer {
     clips = clips.map((c) => ({ ...c, fileToken: this.tokenOf(c.file) }));
     this.sequence = schedule(clips);
     const durationSec = sequenceDuration(this.sequence);
-    this.send({ type: 'set-sequence', clips });
-    this.update({ playing: false, durationSec, hasAudio: clips.some((c) => c.hasAudio) });
+    this.send({ type: 'set-sequence', clips, mix });
+    this.update({
+      playing: false,
+      durationSec,
+      hasAudio: clips.some((c) => c.hasAudio) || mix.audioItems.length > 0,
+    });
     this.pausedAt = Math.min(t, durationSec);
     this.stepBase = null;
     if (wasPlaying && this.pausedAt < durationSec - 1e-3) this.play();
@@ -144,7 +157,13 @@ export class PreviewPlayer {
     if (this.snapshot.hasAudio && typeof AudioContext !== 'undefined') {
       this.audioCtx ??= new AudioContext({ latencyHint: 'playback' });
       void this.audioCtx.resume();
-      this.audio ??= new AudioScheduler(this.audioCtx);
+      if (!this.audio) {
+        const ctx = this.audioCtx;
+        this.gain = ctx.createGain();
+        this.gain.gain.value = this.muted ? 0 : 1;
+        this.gain.connect(ctx.destination);
+        this.audio = new AudioScheduler(ctx, this.gain);
+      }
       this.audio.start(from, this.audioCtx.currentTime + START_DELAY_SEC);
     } else {
       this.perfT0 = performance.now();

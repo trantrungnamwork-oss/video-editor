@@ -15,15 +15,41 @@ export function ClipAudioPanel({ clip }: { clip: Clip }) {
     const it = s.items.find((i) => i.id === clip.mediaId);
     return !!it && it.status !== 'error' && it.status !== 'probing' && !!it.info.audio;
   });
-  const saved = audioOf(clip);
-  const [draft, setDraft] = useState<{ clipId: string; audio: ClipAudio } | null>(null);
-  const current = draft?.clipId === clip.id ? draft.audio : saved;
-  const maxFade = Math.min(MAX_FADE_SEC, Math.floor(clipDuration(clip) * 10) / 10);
+  if (!hasAudio) {
+    return (
+      <p className="mt-2 text-sm text-neutral-500" data-testid="clip-audio-panel">
+        This clip has no audio.
+      </p>
+    );
+  }
+  return (
+    <AudioControls
+      id={clip.id}
+      saved={audioOf(clip)}
+      lengthSec={clipDuration(clip)}
+      onCommit={(audio) => useProjectStore.getState().setClipAudio(clip.id, audio)}
+      testId="clip-audio-panel"
+    />
+  );
+}
 
-  const change = (patch: Partial<ClipAudio>) =>
-    setDraft({ clipId: clip.id, audio: { ...current, ...patch } });
+/** Mute, volume and fade sliders for a clip or a music/voice item. */
+export function AudioControls(props: {
+  id: string;
+  saved: ClipAudio;
+  lengthSec: number;
+  onCommit: (audio: ClipAudio) => void;
+  testId: string;
+  children?: ReactNode;
+}) {
+  const { id, saved } = props;
+  const [draft, setDraft] = useState<{ id: string; audio: ClipAudio } | null>(null);
+  const current = draft?.id === id ? draft.audio : saved;
+  const maxFade = Math.min(MAX_FADE_SEC, Math.floor(props.lengthSec * 10) / 10);
+
+  const change = (patch: Partial<ClipAudio>) => setDraft({ id, audio: { ...current, ...patch } });
   const commit = (patch?: Partial<ClipAudio>) => {
-    useProjectStore.getState().setClipAudio(clip.id, { ...current, ...patch });
+    props.onCommit({ ...current, ...patch });
     setDraft(null);
   };
   const sliderEvents = {
@@ -32,18 +58,10 @@ export function ClipAudioPanel({ clip }: { clip: Clip }) {
     onBlur: () => draft && commit(),
   };
 
-  if (!hasAudio) {
-    return (
-      <p className="mt-2 text-sm text-neutral-500" data-testid="clip-audio-panel">
-        This clip has no audio.
-      </p>
-    );
-  }
-
   return (
     <fieldset
       className="mt-2 grid gap-x-4 gap-y-1 rounded-lg bg-neutral-900 p-3 sm:grid-cols-[auto_1fr_1fr_1fr]"
-      data-testid="clip-audio-panel"
+      data-testid={props.testId}
     >
       <legend className="sr-only">Clip audio</legend>
       <button
@@ -89,6 +107,7 @@ export function ClipAudioPanel({ clip }: { clip: Clip }) {
         onChange={(fadeOutSec) => change({ fadeOutSec })}
         {...sliderEvents}
       />
+      {props.children}
     </fieldset>
   );
 }

@@ -1,4 +1,5 @@
 import { canEncodeAudio, canEncodeVideo } from 'mediabunny';
+import { NO_MIX } from '../media/audioMix';
 import { analyzeCopy, runCopyExport, type CopyJob } from '../media/export/copyExport';
 import {
   audioSource,
@@ -134,7 +135,8 @@ async function startCopy(job: CopyJob) {
   try {
     await clearFinishedExports();
     writer = await openOpfsWriter(await exportDir(), job.fileName);
-    const withAudio = job.clips.some((c) => c.hasAudio);
+    const mix = job.mix ?? NO_MIX;
+    const withAudio = job.clips.some((c) => c.hasAudio) || mix.audioItems.length > 0;
     const audio = withAudio ? audioSource(job.container === 'mp4' ? 'aac' : 'opus') : null;
     const check = () => {
       if (controller.signal.aborted) throw new ExportCancelled();
@@ -156,7 +158,7 @@ async function startCopy(job: CopyJob) {
         ? {
             audio: {
               source: audio,
-              encode: (seq) => encodeAudio(seq, audio, check, () => undefined),
+              encode: (seq) => encodeAudio(seq, mix, audio, check, () => undefined),
             },
           }
         : {}),

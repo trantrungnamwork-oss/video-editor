@@ -83,9 +83,11 @@ export function jobKey(job: {
   height: number;
   format: { container: string; video: string; audio: string };
   videoBitrate: number;
+  /** Music and voice-over (file identities); absent = none. */
+  mix?: { audioItems: readonly (object & { file: FileIdentity })[]; duck: boolean };
 }): string {
   return JSON.stringify({
-    v: 3,
+    v: 4,
     segmentSec: SEGMENT_SEC,
     clips: job.clips.map((c) => [
       c.file.name,
@@ -100,5 +102,6 @@ export function jobKey(job: {
     size: [job.width, job.height],
     format: [job.format.container, job.format.video, job.format.audio],
     bitrate: job.videoBitrate,
+    mix: job.mix && job.mix.audioItems.length > 0 ? job.mix : null,
   });
 }

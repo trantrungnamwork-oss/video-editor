@@ -28,17 +28,18 @@ Goal: finish each task with the fewest tokens. Project rules stay in `CLAUDE.md`
 ## Code map
 
 - **Model (pure):** `src/core/project.ts` (clips, trim/split, audio, layout, aspect), `frame.ts`
-  (frame size, cover crop), `audioGain.ts`, `history.ts`, `timelineMath.ts`
+  (frame size, cover crop), `audioTrack.ts` (music/voice items, ducking), `audioGain.ts`, `history.ts`, `timelineMath.ts`
 - **State:** `src/state/projectStore.ts` (undoable edits), `mediaStore.ts` (library, vault
   copies), `persistence.ts` (localStorage + restore)
 - **Preview:** `src/media/preview/previewPlayer.ts` (main thread, clock, audio),
   `previewSession.ts` (worker: decode, draw), `sequence.ts` (timeline ↔ source)
 - **Render:** `src/media/render/compositor.ts` (one frame, shared by preview and export)
 - **Export:** `src/media/export/exportPipeline.ts` (segments, audio, mux), `copyExport.ts`
-  (lossless), `segments.ts` (`jobKey`: bump `v` when output-affecting fields change), `plan.ts`,
+  (lossless), `audioMixer.ts` (export mix), `segments.ts` (`jobKey`: bump `v` when output-affecting fields
+  change), `plan.ts`,
   `exportClient.ts` + `src/workers/export.worker.ts`
 - **Storage:** `src/media/vault/vault.ts` + `src/workers/vault.worker.ts` (OPFS copies)
-- **UI:** `src/ui/EditorPage.tsx` (wiring), `timeline/Timeline.tsx`, `timeline/Clip*Panel.tsx`,
+- **UI:** `src/ui/EditorPage.tsx` (wiring), `timeline/Timeline.tsx`, `timeline/Clip*Panel.tsx`, `timeline/AudioRows.tsx` + `AudioItemPanel.tsx`, `AudioButtons.tsx`,
   `AspectPicker.tsx`, `export/ExportDialog.tsx`, `MediaCard.tsx`
 - **Tests:** unit next to source; e2e `e2e/helpers.ts` (`openWithTestClips`, `scrubTo`,
   `startReencodeExport`, `finishExportAndDownload`), `e2e/verify.ts` (`probeFile`,
@@ -50,6 +51,8 @@ Goal: finish each task with the fewest tokens. Project rules stay in `CLAUDE.md`
 - Test clips: `?testclip=WxHxS[@FPS[:RATE[:CH]]]`; white flash + 1 kHz beep (peak 0.3) for the
   first 0.1 s of every second; frame number in the centre. Headless Chromium has no H.264/AAC:
   e2e exports are WebM (VP9 + Opus); the phone uses MP4.
+- e2e audio: `e2e/wav.ts` builds WAV fixtures; the fake mic records silence;
+  `audioPeaks(browser, path, windows)` measures levels.
 - Test hooks: `?vault=off` (no OPFS copies), `?exportfault=N` (segment N fails once).
 - New per-clip fields must flow through: `Clip` → `SequenceClip` (EditorPage) → `ExportClip` /
   `CopyClip` → `Checkpoint` + `jobKey`.

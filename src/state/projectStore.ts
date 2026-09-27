@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 import type { AspectRatio, ClipLayout, Fit } from '../core/frame';
+import {
+  addAudioItem,
+  moveAudioItem,
+  removeAudioItem,
+  setAudioItemAudio,
+  setAudioItemLength,
+  setDuck,
+} from '../core/audioTrack';
 import { commit, createHistory, redo, undo, type History } from '../core/history';
 import {
   addClip,
@@ -14,6 +22,7 @@ import {
   splitAt,
   trimIn,
   trimOut,
+  type AudioKind,
   type ClipAudio,
   type MediaSource,
   type Project,
@@ -25,6 +34,15 @@ export interface ProjectState {
   history: History<Project>;
   selectedClipId: string | null;
   select(clipId: string | null): void;
+  /** Selected music/voice item (clip and audio selections exclude each other). */
+  selectedAudioId: string | null;
+  selectAudio(id: string | null): void;
+  addAudio(source: MediaSource, kind: AudioKind, startSec: number): void;
+  moveAudio(id: string, startSec: number): void;
+  setAudioLength(id: string, patch: { durationSec?: number | null; loop?: boolean }): void;
+  setAudioSettings(id: string, patch: Partial<ClipAudio>): void;
+  removeAudio(id: string): void;
+  setDuck(on: boolean): void;
   addMedia(source: MediaSource): void;
   trimIn(clipId: string, inSec: number): void;
   trimOut(clipId: string, outSec: number): void;
@@ -47,7 +65,7 @@ export interface ProjectState {
 export const mediaSourceOf = (id: string, info: MediaInfo): MediaSource => ({
   id,
   durationSec: info.durationSec,
-  frameRate: info.video.frameRate,
+  frameRate: info.video?.frameRate ?? null,
 });
 
 export function createProjectStore() {
@@ -59,13 +77,27 @@ export function createProjectStore() {
         const ids = new Set(history.present.clips.map((c) => c.id));
         const selectedClipId =
           s.selectedClipId && ids.has(s.selectedClipId) ? s.selectedClipId : null;
-        return { history, selectedClipId };
+        const selectedAudioId =
+          s.selectedAudioId && history.present.audioItems?.some((a) => a.id === s.selectedAudioId)
+            ? s.selectedAudioId
+            : null;
+        return { history, selectedClipId, selectedAudioId };
       });
 
     return {
       history: createHistory(EMPTY_PROJECT),
       selectedClipId: null,
-      select: (selectedClipId) => set({ selectedClipId }),
+      selectedAudioId: null,
+      select: (selectedClipId) =>
+        set(selectedClipId ? { selectedClipId, selectedAudioId: null } : { selectedClipId }),
+      selectAudio: (selectedAudioId) =>
+        set(selectedAudioId ? { selectedAudioId, selectedClipId: null } : { selectedAudioId }),
+      addAudio: (source, kind, startSec) => edit((p) => addAudioItem(p, source, kind, startSec)),
+      moveAudio: (id, startSec) => edit((p) => moveAudioItem(p, id, startSec)),
+      setAudioLength: (id, patch) => edit((p) => setAudioItemLength(p, id, patch)),
+      setAudioSettings: (id, patch) => edit((p) => setAudioItemAudio(p, id, patch)),
+      removeAudio: (id) => edit((p) => removeAudioItem(p, id)),
+      setDuck: (on) => edit((p) => setDuck(p, on)),
       addMedia: (source) => edit((p) => addClip(p, source)),
       trimIn: (id, sec) => edit((p) => trimIn(p, id, sec)),
       trimOut: (id, sec) => edit((p) => trimOut(p, id, sec)),
@@ -79,11 +111,11 @@ export function createProjectStore() {
       removeMedia: (id) => edit((p) => removeMedia(p, id)),
       undo: () => {
         set((s) => ({ history: undo(s.history) }));
-        get().select(validSelection(get()));
+        set(validSelection(get()));
       },
       redo: () => {
         set((s) => ({ history: redo(s.history) }));
-        get().select(validSelection(get()));
+        set(validSelection(get()));
       },
       setCuts: (cuts) =>
         edit((p) =>
@@ -94,14 +126,26 @@ export function createProjectStore() {
             return next;
           }, p),
         ),
-      restore: (project) => set({ history: createHistory(project), selectedClipId: null }),
+      restore: (project) =>
+        set({ history: createHistory(project), selectedClipId: null, selectedAudioId: null }),
     };
   });
 }
 
-function validSelection(s: ProjectState): string | null {
-  const id = s.selectedClipId;
-  return id && s.history.present.clips.some((c) => c.id === id) ? id : null;
+function validSelection(s: ProjectState) {
+  const p = s.history.present;
+  const c = s.selectedClipId;
+  const a = s.selectedAudioId;
+  return {
+    selectedClipId: c && p.clips.some((x) => x.id === c) ? c : null,
+    selectedAudioId: a && p.audioItems?.some((x) => x.id === a) ? a : null,
+  };
+}
+
+/** Where audio files picked for the music/voice rows go once probed (media id → placement). */
+const pendingAudio = new Map<string, { kind: AudioKind; startSec: number }>();
+export function placeAudioWhenReady(ids: string[], kind: AudioKind, startSec: number) {
+  for (const id of ids) pendingAudio.set(id, { kind, startSec });
 }
 
 export const useProjectStore = createProjectStore();
@@ -120,6 +164,16 @@ export function autoAddImportedMedia(
   const sync = (items: MediaItem[]) => {
     for (const it of items) {
       if (it.status !== 'ready' || !it.info.canDecode || added.has(it.id)) continue;
+      const placement = pendingAudio.get(it.id);
+      if (it.info.kind === 'audio') {
+        // Audio files go on the music/voice rows, and only when picked for them.
+        if (!placement) continue;
+        added.add(it.id);
+        pendingAudio.delete(it.id);
+        const s = project.getState();
+        s.addAudio(mediaSourceOf(it.id, it.info), placement.kind, placement.startSec);
+        continue;
+      }
       added.add(it.id);
       if (it.id in project.getState().history.present.media) continue;
       project.getState().addMedia(mediaSourceOf(it.id, it.info));

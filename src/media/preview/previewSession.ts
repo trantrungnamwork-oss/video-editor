@@ -15,6 +15,8 @@ import {
   type VideoSample,
 } from 'mediabunny';
 import { applyGain, isSilent } from '../../core/audioGain';
+import { itemEnd, itemGainAt, itemPasses } from '../../core/audioTrack';
+import { NO_MIX, type AudioMix, type MixItem } from '../audioMix';
 import { SUPPORTED_INPUT_FORMATS } from '../probe';
 import { drawFrame } from '../render/compositor';
 import { FrameTracker } from './frameTracker';
@@ -24,6 +26,7 @@ import {
   audioWindow,
   indexAt,
   schedule,
+  sequenceDuration,
   sourceTime,
   timelineTime,
   type ScheduledClip,
@@ -60,7 +63,9 @@ export class PreviewSession {
   private endedSent = false;
   private audioGeneration = 0;
   private audioCredit = 0;
-  private wakeAudio: (() => void) | null = null;
+  /** Audio pumps (clip lane + one per music/voice item) waiting for more credit. */
+  private readonly audioWaiters = new Set<() => void>();
+  private mix: AudioMix = NO_MIX;
   private droppedBefore = 0;
   /** Control ops run strictly in order. */
   private control: Promise<unknown> = Promise.resolve();
@@ -75,7 +80,7 @@ export class PreviewSession {
         return this.onTick(msg.t);
       case 'audio-credit':
         this.audioCredit = msg.until;
-        this.wakeAudio?.();
+        this.wakeAudioPumps();
         return;
       case 'resize':
         return this.onResize(msg.width, msg.height);
@@ -87,7 +92,7 @@ export class PreviewSession {
       case 'init':
         return this.enqueue(() => this.init(msg.canvas));
       case 'set-sequence':
-        return this.enqueue(() => this.setSequence(msg.clips));
+        return this.enqueue(() => this.setSequence(msg.clips, msg.mix));
       case 'play':
         return this.enqueue(() => this.play(msg.t, msg.playId));
       case 'pause':
@@ -118,9 +123,10 @@ export class PreviewSession {
     this.post({ type: 'ready' });
   }
 
-  private async setSequence(clips: SequenceClip[]) {
+  private async setSequence(clips: SequenceClip[], mix: AudioMix) {
     await this.stopPlayback();
     this.sequence = schedule(clips);
+    this.mix = mix;
     const used = new Set(clips.map(mediaKey));
     for (const [id, open] of this.media) {
       if (used.has(id)) continue;
@@ -220,7 +226,13 @@ export class PreviewSession {
     this.playback = new PlaybackQueue(this.videoFrom(this.sequence, t), READ_AHEAD_FRAMES, (err) =>
       this.fail(err),
     );
-    void this.pumpAudio(this.sequence, t, ++this.audioGeneration, playId);
+    const generation = ++this.audioGeneration;
+    void this.pumpAudio(this.sequence, t, generation, playId);
+    const videoEnd = sequenceDuration(this.sequence);
+    for (const item of this.mix.audioItems) {
+      if (isSilent(item.audio) || itemEnd(item, videoEnd) <= t) continue;
+      void this.pumpItem(item, t, videoEnd, generation, playId);
+    }
   }
 
   /** Decoded source frames of one clip from `fromSec`, each tracked as soon as it exists. */
@@ -308,9 +320,7 @@ export class PreviewSession {
             chunk.channels.map((c) => c.buffer),
           );
           // Back-pressure: wait until the main thread wants audio past this point.
-          while (live() && end > this.audioCredit) {
-            await new Promise<void>((r) => (this.wakeAudio = r));
-          }
+          await this.waitForCredit(end, live);
           if (!live()) break;
         }
       }
@@ -319,9 +329,91 @@ export class PreviewSession {
     }
   }
 
+  private wakeAudioPumps() {
+    const waiters = [...this.audioWaiters];
+    this.audioWaiters.clear();
+    for (const w of waiters) w();
+  }
+
+  private async waitForCredit(until: number, live: () => boolean) {
+    while (live() && until > this.audioCredit) {
+      await new Promise<void>((r) => this.audioWaiters.add(r));
+    }
+  }
+
+  /** Streams one music/voice item from timeline time `from`: each loop pass, gain applied. */
+  private async pumpItem(
+    item: MixItem,
+    from: number,
+    videoEnd: number,
+    generation: number,
+    playId: number,
+  ) {
+    const live = () => generation === this.audioGeneration;
+    const input = new Input({
+      source: new BlobSource(item.file, { maxCacheSize: SOURCE_CACHE_BYTES }),
+      formats: SUPPORTED_INPUT_FORMATS,
+    });
+    try {
+      const track = await input.getPrimaryAudioTrack();
+      if (!track) return;
+      const sink = new AudioSampleSink(track);
+      for (const pass of itemPasses(item, from, videoEnd, videoEnd)) {
+        for await (const sample of sink.samples(pass.sourceFrom, pass.sourceTo)) {
+          if (!live()) {
+            sample.close();
+            return;
+          }
+          const sr = sample.sampleRate;
+          const win = audioWindow(
+            sample.timestamp,
+            sample.numberOfFrames,
+            sr,
+            pass.sourceFrom,
+            pass.sourceTo,
+          );
+          if (!win) {
+            sample.close();
+            continue;
+          }
+          const src = sample.timestamp + win.offset / sr;
+          const t0 = pass.timelineStart + Math.max(0, src - pass.sourceFrom);
+          const channels: Float32Array[] = [];
+          for (let c = 0; c < sample.numberOfChannels; c++) {
+            const plane = new Float32Array(win.count);
+            sample.copyTo(plane, {
+              planeIndex: c,
+              format: 'f32-planar',
+              frameOffset: win.offset,
+              frameCount: win.count,
+            });
+            channels.push(plane);
+          }
+          sample.close();
+          for (let i = 0; i < win.count; i += 64) {
+            const g = itemGainAt(this.mix, item, t0 + i / sr, videoEnd);
+            const end = Math.min(win.count, i + 64);
+            for (const p of channels) for (let k = i; k < end; k++) p[k] = (p[k] ?? 0) * g;
+          }
+          const chunk: AudioChunk = { timestamp: t0, sampleRate: sr, channels };
+          this.post(
+            { type: 'audio', chunk, playId },
+            channels.map((c) => c.buffer),
+          );
+          await this.waitForCredit(t0 + win.count / sr, live);
+          if (!live()) return;
+        }
+      }
+    } catch (err) {
+      if (live()) this.fail(err);
+    } finally {
+      input.dispose();
+    }
+  }
+
   private async stopPlayback() {
     this.audioGeneration++;
-    this.wakeAudio?.();
+    this.wakeAudioPumps();
     const q = this.playback;
     this.playback = null;
     if (q) {

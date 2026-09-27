@@ -19,6 +19,8 @@ import { clampPps, dropIndex, fitPps, minPps, zoomAround } from '../../core/time
 import type { PreviewPlayer } from '../../media/preview/previewPlayer';
 import { useProjectStore } from '../../state/projectStore';
 import { usePlayhead } from '../preview/usePlayhead';
+import { AudioItemPanel } from './AudioItemPanel';
+import { AudioRows, audioRowsHeight } from './AudioRows';
 import { ClipAudioPanel } from './ClipAudioPanel';
 import { ClipFramePanel } from './ClipFramePanel';
 import { TimelineToolbar } from './TimelineToolbar';
@@ -57,6 +59,8 @@ export function Timeline({ player, project, files }: Props) {
   const selectedClipId = useProjectStore((s) => s.selectedClipId);
   const select = useProjectStore((s) => s.select);
   const selectedClip = project.clips.find((c) => c.id === selectedClipId);
+  const selectedAudioId = useProjectStore((s) => s.selectedAudioId);
+  const selectedAudio = project.audioItems?.find((a) => a.id === selectedAudioId);
 
   const starts = useMemo(() => clipStarts(project), [project]);
   const duration = useMemo(() => project.clips.reduce((d, c) => d + clipDuration(c), 0), [project]);
@@ -280,8 +284,10 @@ export function Timeline({ player, project, files }: Props) {
           ref={viewportRef}
           onScroll={onScroll}
           onClick={(e) => {
-            if (e.target === e.currentTarget || (e.target as HTMLElement).dataset['track'])
+            if (e.target === e.currentTarget || (e.target as HTMLElement).dataset['track']) {
               select(null);
+              useProjectStore.getState().selectAudio(null);
+            }
           }}
           className="overflow-x-auto overflow-y-hidden overscroll-x-contain rounded-lg bg-neutral-900 [scrollbar-width:none]"
           style={{ touchAction: 'pan-x' }}
@@ -289,10 +295,19 @@ export function Timeline({ player, project, files }: Props) {
         >
           <div
             className="relative"
-            style={{ width: contentWidth, height: RULER_HEIGHT + TRACK_HEIGHT + 16 }}
+            style={{
+              width: contentWidth,
+              height: RULER_HEIGHT + TRACK_HEIGHT + 16 + audioRowsHeight(project),
+            }}
             data-track="1"
           >
             <Ruler duration={duration} pps={zoom} pad={pad} />
+            <AudioRows
+              project={project}
+              pps={zoom}
+              pad={pad}
+              top={RULER_HEIGHT + TRACK_HEIGHT + 12}
+            />
             {project.clips.map((clip, i) => (
               <ClipBlock
                 key={clip.id}
@@ -350,6 +365,7 @@ export function Timeline({ player, project, files }: Props) {
         />
         {selectedClip && <ClipFramePanel key={`f-${selectedClip.id}`} clip={selectedClip} />}
         {selectedClip && <ClipAudioPanel key={selectedClip.id} clip={selectedClip} />}
+        {selectedAudio && <AudioItemPanel key={selectedAudio.id} item={selectedAudio} />}
       </div>
     </div>
   );

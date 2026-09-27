@@ -23,7 +23,7 @@ describe('probeMedia', () => {
       frameRate: 30,
       isVariableFrameRate: false,
     });
-    expect(info.video.codecString).toMatch(/^(hvc1|hev1)\./);
+    expect(info.video?.codecString).toMatch(/^(hvc1|hev1)\./);
     expect(info.audio).toMatchObject({ codec: 'aac', sampleRate: 48_000, channels: 2 });
     expect(info.durationSec).toBeCloseTo(2, 1);
     expect(info.canDecode).toBe(true);
@@ -103,8 +103,15 @@ describe('probeMedia', () => {
 
   it('reports no-api when WebCodecs is unavailable', async () => {
     const info = await probe({ container: 'mp4', video: 'avc', audio: 'aac' }, {});
-    expect(info.video.decode.status).toBe('no-api');
+    expect(info.video?.decode.status).toBe('no-api');
     expect(info.canDecode).toBe(false);
+  });
+
+  it('reads audio-only files (music, voice-over) as kind audio', async () => {
+    const info = await probeMedia(new Blob([wav(44_100, 1, 1)]), 'song.wav', supportsAll);
+    expect(info).toMatchObject({ kind: 'audio', video: null, canDecode: true });
+    expect(info.audio).toMatchObject({ sampleRate: 44_100, channels: 1 });
+    expect(info.durationSec).toBeCloseTo(1, 2);
   });
 
   it('rejects non-video files with a typed error', async () => {
@@ -163,3 +170,26 @@ describe('probeMedia I/O', () => {
     },
   );
 });
+
+/** Minimal 16-bit PCM WAV of silence. */
+function wav(rate: number, channels: number, seconds: number): ArrayBuffer {
+  const frames = Math.round(rate * seconds);
+  const data = frames * channels * 2;
+  const buf = new DataView(new ArrayBuffer(44 + data));
+  const str = (o: number, t: string) =>
+    [...t].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF');
+  buf.setUint32(4, 36 + data, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  buf.setUint32(16, 16, true);
+  buf.setUint16(20, 1, true); // PCM
+  buf.setUint16(22, channels, true);
+  buf.setUint32(24, rate, true);
+  buf.setUint32(28, rate * channels * 2, true);
+  buf.setUint16(32, channels * 2, true);
+  buf.setUint16(34, 16, true);
+  str(36, 'data');
+  buf.setUint32(40, data, true);
+  return buf.buffer;
+}

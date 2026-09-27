@@ -1,6 +1,15 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { wav } from './e2e/wav';
 
 const PORT = 4173;
+
+// The fake microphone records silence, so voice-over tests can measure the ducked music alone.
+const FAKE_MIC = join(tmpdir(), 'video-editor-e2e', 'silence.wav');
+mkdirSync(join(tmpdir(), 'video-editor-e2e'), { recursive: true });
+writeFileSync(FAKE_MIC, wav({ rate: 48_000, seconds: 30 }));
 
 export default defineConfig({
   testDir: './e2e',
@@ -11,6 +20,13 @@ export default defineConfig({
   use: {
     baseURL: `http://localhost:${PORT}`,
     trace: 'on-first-retry',
+    launchOptions: {
+      args: [
+        '--use-fake-device-for-media-stream',
+        '--use-fake-ui-for-media-stream',
+        `--use-file-for-fake-audio-capture=${FAKE_MIC}`,
+      ],
+    },
   },
   webServer: {
     command: `pnpm build && pnpm preview --port ${PORT} --strictPort`,

@@ -45,6 +45,21 @@ export async function expectFlashes(
  * audio, per whole second. Demuxed here in Node, decoded with WebCodecs in the page.
  */
 export async function beepPeaks(browser: Browser, path: string): Promise<number[]> {
+  const probe = await probeFile(path);
+  const seconds = Math.ceil(probe.durationSec);
+  return audioPeaks(
+    browser,
+    path,
+    Array.from({ length: seconds }, (_, s) => [s, s + 0.1] as const),
+  );
+}
+
+/** Peak level of the exported file's audio (first channel) within each [from, to) window. */
+export async function audioPeaks(
+  browser: Browser,
+  path: string,
+  windows: readonly (readonly [number, number])[],
+): Promise<number[]> {
   const bytes = await readFile(path);
   const input = new Input({ source: new BufferSource(bytes), formats: ALL_FORMATS });
   const track = await input.getPrimaryAudioTrack();
@@ -68,7 +83,7 @@ export async function beepPeaks(browser: Browser, path: string): Promise<number[
   const page = await ctx.newPage();
   await page.goto('/'); // a secure context for WebCodecs
   const peaks = await page.evaluate(
-    async ({ codec, sampleRate, numberOfChannels, description, packets }) => {
+    async ({ codec, sampleRate, numberOfChannels, description, packets, windows }) => {
       const out: number[] = [];
       const decoder = new AudioDecoder({
         output: (data) => {
@@ -77,9 +92,11 @@ export async function beepPeaks(browser: Browser, path: string): Promise<number[
           const t0 = data.timestamp / 1e6;
           for (let i = 0; i < plane.length; i++) {
             const t = t0 + i / data.sampleRate;
-            if (t < 0 || t % 1 >= 0.1) continue;
-            const s = Math.floor(t);
-            out[s] = Math.max(out[s] ?? 0, Math.abs(plane[i] ?? 0));
+            for (let w = 0; w < windows.length; w++) {
+              const win = windows[w];
+              if (!win || t < win[0] || t >= win[1]) continue;
+              out[w] = Math.max(out[w] ?? 0, Math.abs(plane[i] ?? 0));
+            }
           }
           data.close();
         },
@@ -105,7 +122,7 @@ export async function beepPeaks(browser: Browser, path: string): Promise<number[
       }
       await decoder.flush();
       decoder.close();
-      return Array.from(out, (v) => v ?? 0);
+      return Array.from({ length: windows.length }, (_, w) => out[w] ?? 0);
     },
     {
       codec: config.codec,
@@ -113,6 +130,7 @@ export async function beepPeaks(browser: Browser, path: string): Promise<number[
       numberOfChannels: config.numberOfChannels,
       description,
       packets,
+      windows: windows.map((w) => [w[0], w[1]]),
     },
   );
   input.dispose();

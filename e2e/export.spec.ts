@@ -57,7 +57,7 @@ test('exports the edited timeline with the right content', async ({ page, browse
   const info = await probeFile(out.path);
   expect(info.durationSec).toBeCloseTo(4.5, 1);
   expect(info.video).toMatchObject({ displayWidth: 1280, displayHeight: 720, frameRate: 30 });
-  expect(info.video.codec).toBe(format === 'mp4' ? 'avc' : 'vp9');
+  expect(info.video?.codec).toBe(format === 'mp4' ? 'avc' : 'vp9');
   expect(info.audio).toMatchObject({
     codec: format === 'mp4' ? 'aac' : 'opus',
     sampleRate: 48_000,
@@ -116,5 +116,5 @@ test('exports a clip whose audio outlasts the last video frame past a segment bo
   const out = await finishExportAndDownload(page);
   const info = await probeFile(out.path);
   expect(info.durationSec).toBeCloseTo(10.4, 1);
-  expect(info.video.displayWidth).toBe(1280);
+  expect(info.video?.displayWidth).toBe(1280);
 });
