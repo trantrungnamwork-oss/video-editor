@@ -207,4 +207,8 @@ error`, the error Chromium raises when a `File` can no longer be read. The previ
      and doubles storage use until the video is removed; browsers may refuse when storage is low.
   3. Both: copy into OPFS when storage allows, fall back to 1 otherwise.
 - Proposal: 1 now, 3 as a follow-up.
-- **Status (2026-09-27): open**, waiting for the owner's decision.
+- **Mitigation shipped (2026-09-27):** picking a library video again renews its handle (no
+  duplicate; the preview reopens it), and after a read error the export dialog checks which
+  source files are still readable. A retest with a fresh import, then mute + fade-out, exported
+  without error, so the earlier failure is attributed to lost access, not to the audio settings.
+- **Status: open**, decision on option 2/3 (OPFS copy) pending.
