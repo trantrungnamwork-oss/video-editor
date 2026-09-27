@@ -8,7 +8,7 @@ import type { SequenceClip } from '../media/preview/sequence';
 import { DEFAULT_TEST_CLIP, parseTestClipSpec } from '../media/testClip';
 import { requestTestClip } from '../media/testClipClient';
 import { frameSize } from '../core/frame';
-import { aspectOf, EMPTY_PROJECT } from '../core/project';
+import { aspectOf, EMPTY_PROJECT, layoutOf } from '../core/project';
 import { useMediaStore } from '../state/mediaStore';
 import { persistChanges } from '../state/persistence';
 import { autoAddImportedMedia, useProjectStore } from '../state/projectStore';
@@ -68,7 +68,7 @@ export function EditorPage() {
           frameRate: it.info.video.frameRate,
           hasAudio: it.info.audio?.decode.status === 'supported',
           audio: c.audio,
-          layout: c.layout,
+          layout: layoutOf(project, c),
         };
       }),
     [project, readyById],

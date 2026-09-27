@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AspectRatio, ClipLayout } from '../core/frame';
+import type { AspectRatio, ClipLayout, Fit } from '../core/frame';
 import { commit, createHistory, redo, undo, type History } from '../core/history';
 import {
   addClip,
@@ -10,6 +10,7 @@ import {
   setAspect,
   setClipAudio,
   setClipLayout,
+  setProjectFit,
   splitAt,
   trimIn,
   trimOut,
@@ -33,6 +34,7 @@ export interface ProjectState {
   setClipAudio(clipId: string, patch: Partial<ClipAudio>): void;
   setClipLayout(clipId: string, patch: Partial<ClipLayout>): void;
   setAspect(aspect: AspectRatio): void;
+  setProjectFit(fit: Fit): void;
   removeMedia(mediaId: string): void;
   undo(): void;
   redo(): void;
@@ -73,6 +75,7 @@ export function createProjectStore() {
       setClipAudio: (id, patch) => edit((p) => setClipAudio(p, id, patch)),
       setClipLayout: (id, patch) => edit((p) => setClipLayout(p, id, patch)),
       setAspect: (aspect) => edit((p) => setAspect(p, aspect)),
+      setProjectFit: (fit) => edit((p) => setProjectFit(p, fit)),
       removeMedia: (id) => edit((p) => removeMedia(p, id)),
       undo: () => {
         set((s) => ({ history: undo(s.history) }));

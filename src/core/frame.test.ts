@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { coverCrop, frameSize } from './frame';
-import { addClip, aspectOf, EMPTY_PROJECT, setAspect, setClipLayout } from './project';
+import {
+  addClip,
+  aspectOf,
+  EMPTY_PROJECT,
+  fitOf,
+  layoutOf,
+  setAspect,
+  setClipLayout,
+  setProjectFit,
+  type Project,
+} from './project';
 
 describe('frameSize', () => {
   it('keeps the source shape or reshapes around its short side', () => {
@@ -35,6 +45,12 @@ describe('coverCrop', () => {
   });
 });
 
+const clipOf = (q: Project) => {
+  const c = q.clips[0];
+  if (!c) throw new Error('no clip');
+  return c;
+};
+
 describe('project frame settings', () => {
   const p = addClip(EMPTY_PROJECT, { id: 'm', durationSec: 5, frameRate: 30 }, { id: () => 'c' });
 
@@ -50,12 +66,22 @@ describe('project frame settings', () => {
     expect(addClip(q, { id: 'n', durationSec: 2, frameRate: 30 }).aspect).toBe('1:1');
   });
 
-  it('stores clamped layouts and drops the default', () => {
-    const q = setClipLayout(p, 'c', { fit: 'cover', panX: 3 });
-    expect(q.clips[0]?.layout).toEqual({ fit: 'cover', panX: 1, panY: 0 });
-    expect(setClipLayout(q, 'c', { fit: 'cover', panX: 1 })).toBe(q);
-    expect(setClipLayout(q, 'c', { fit: 'contain', panX: 0 }).clips[0]).not.toHaveProperty(
-      'layout',
-    );
+  it('fills by default and stores only overrides and pan', () => {
+    expect(layoutOf(p, clipOf(p))).toEqual({ fit: 'cover', panX: 0, panY: 0 });
+    const q = setClipLayout(p, 'c', { fit: 'contain', panX: 3 });
+    expect(q.clips[0]?.layout).toEqual({ fit: 'contain', panX: 1, panY: 0 });
+    expect(setClipLayout(q, 'c', { fit: 'contain', panX: 1 })).toBe(q);
+    // Back to the project's fit and centred: nothing stored.
+    expect(setClipLayout(q, 'c', { fit: 'cover', panX: 0 }).clips[0]).not.toHaveProperty('layout');
+  });
+
+  it('sets the fit for the whole project and resets clip overrides, keeping pan', () => {
+    const q = setClipLayout(p, 'c', { fit: 'contain', panY: 0.5 });
+    const r = setProjectFit(q, 'contain');
+    expect(fitOf(r)).toBe('contain');
+    expect(r.clips[0]?.layout).toEqual({ panX: 0, panY: 0.5 });
+    expect(layoutOf(r, clipOf(r))).toEqual({ fit: 'contain', panX: 0, panY: 0.5 });
+    expect(setProjectFit(r, 'contain')).toBe(r);
+    expect(setProjectFit(r, 'cover')).not.toHaveProperty('fit');
   });
 });

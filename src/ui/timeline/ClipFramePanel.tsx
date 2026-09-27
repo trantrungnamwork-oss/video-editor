@@ -9,7 +9,8 @@ import { useProjectStore } from '../../state/projectStore';
  * commit on release, like the audio panel.
  */
 export function ClipFramePanel({ clip }: { clip: Clip }) {
-  const saved = layoutOf(clip);
+  const project = useProjectStore((s) => s.history.present);
+  const saved = layoutOf(project, clip);
   const [draft, setDraft] = useState<{ clipId: string; layout: ClipLayout } | null>(null);
   const current = draft?.clipId === clip.id ? draft.layout : saved;
   const commit = (patch?: Partial<ClipLayout>) => {

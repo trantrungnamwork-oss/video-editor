@@ -16,12 +16,18 @@ async function frameRatio(page: Page) {
   return box ? box.width / box.height : 0;
 }
 
-test('reshapes the frame to 9:16 with bars, and the export matches the preview', async ({
-  page,
-  browser,
-}) => {
+test('fills a reshaped frame by default', async ({ page }) => {
   await openWithTestClips(page, 1, 2);
   await pickAspect(page, '9:16');
+  const grid = await previewGrid(page, 0.5, COLS, ROWS);
+  for (const cell of [...grid.slice(0, COLS), ...grid.slice(-COLS)])
+    expect(cell).toBeGreaterThan(8);
+});
+
+test('fits all clips with bars, and the export matches the preview', async ({ page, browser }) => {
+  await openWithTestClips(page, 1, 2);
+  await pickAspect(page, '9:16');
+  await page.getByTestId('project-fit').getByRole('radio', { name: 'Fit' }).click();
   await expect.poll(() => frameRatio(page)).toBeCloseTo(9 / 16, 1);
 
   const preview = await previewGrid(page, 0.5, COLS, ROWS);
@@ -53,6 +59,8 @@ test('fills the frame with a panned crop, identically in preview and export', as
   await pickAspect(page, '9:16');
   await page.getByTestId('timeline-clip').first().click();
   const framing = page.getByTestId('clip-frame-panel');
+  // Project fit is Fit; this clip overrides it with Fill.
+  await page.getByTestId('project-fit').getByRole('radio', { name: 'Fit' }).click();
   await framing.getByRole('radio', { name: 'Fill' }).click();
   const centred = await previewGrid(page, 0.1, COLS, ROWS);
   // Fill: no bars.

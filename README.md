@@ -25,8 +25,9 @@ Import clips (metadata and decodability are probed in a worker); they land on th
 automatically. Scroll the timeline to scrub, pinch to zoom, tap a clip to select it, drag its
 yellow edges to trim or its ⠿ grip to reorder; split, delete and undo/redo are in the toolbar.
 The selected clip's volume (0–200 %), mute and fade-in/out are set under the toolbar.
-The frame shape (original, 16:9, 9:16, 1:1, 4:5) is picked under the preview; each clip can Fit
-(bars) or Fill (cropped, with position sliders) the frame.
+The frame shape (original, 16:9, 9:16, 1:1, 4:5) is picked under the preview; clips fill it
+(cropped) by default, or Fit it (bars) — for all clips next to the shapes, or per clip in its
+panel with position sliders.
 **Export → Original** copies the video without re-encoding (lossless, fast) when all cuts are on
 keyframes; the dialog offers to snap the cuts that aren't. Otherwise **Export** encodes the timeline
 on the device (MP4 H.264/AAC, or WebM VP9/Opus where MP4 is not

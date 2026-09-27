@@ -32,6 +32,10 @@ them (`VideoSampleSource` transform). Templates also need a project-level frame 
   clip (commit on release, one undo step). The preview box always has the frame's shape (at most
   45 % of the screen height).
 
+- **Fill by default (owner's choice, 2026-09-27).** `Project.fit` (default 'cover') applies to
+  every clip; a Fit/Fill switch next to the frame shapes sets it for the whole project and resets
+  clip overrides (pan kept). A clip's own Fit/Fill is stored only when it differs.
+
 ## Consequences
 
 - An e2e test compares a luma grid of the preview with the same frame of the exported file

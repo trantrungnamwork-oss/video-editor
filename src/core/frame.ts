@@ -13,15 +13,20 @@ const RATIO: Record<Exclude<AspectRatio, 'source'>, number> = {
   '4:5': 4 / 5,
 };
 
-/** How a clip fills the frame: whole picture (bars) or filled and cropped, `pan` moving the crop. */
+/** Whole picture with bars ('contain') or filling the frame, cropped ('cover'). */
+export type Fit = 'contain' | 'cover';
+/** New projects fill the frame (the common expectation on phones: no black bars). */
+export const DEFAULT_FIT: Fit = 'cover';
+
+/** How a clip is drawn in the frame (resolved: the clip's override or the project's fit). */
 export interface ClipLayout {
-  fit: 'contain' | 'cover';
+  fit: Fit;
   /** -1..1: which part of the picture stays visible when it is cropped (0 = centre). */
   panX: number;
   panY: number;
 }
 
-export const DEFAULT_LAYOUT: ClipLayout = { fit: 'contain', panX: 0, panY: 0 };
+export const DEFAULT_LAYOUT: ClipLayout = { fit: DEFAULT_FIT, panX: 0, panY: 0 };
 
 const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
 
