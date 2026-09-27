@@ -8,8 +8,18 @@ import { identityOf, type FileIdentity } from '../fileIdentity';
 import { VAULT_DIR, type FromVault } from './protocol';
 
 export { VAULT_DIR };
-/** Space left free for exports and the browser after a copy. */
+/**
+ * Space left free after a copy, for exports and the browser: 512 MB, or 10 % of the quota when
+ * the quota itself is small (private windows, test browsers), so short clips are still kept.
+ */
 export const RESERVE_BYTES = 512 * 1024 * 1024;
+const RESERVE_FRACTION = 0.1;
+
+/** Pure rule behind hasRoomFor. */
+export function roomFor(quota: number, usage: number, bytes: number): boolean {
+  const reserve = Math.min(RESERVE_BYTES, quota * RESERVE_FRACTION);
+  return quota - usage - bytes >= reserve;
+}
 
 export type StoreResult = { stored: File } | { skipped: string };
 
@@ -48,7 +58,7 @@ export async function hasRoomFor(bytes: number): Promise<boolean> {
   try {
     const { quota, usage } = await navigator.storage.estimate();
     if (quota === undefined || usage === undefined) return false;
-    return quota - usage - bytes >= RESERVE_BYTES;
+    return roomFor(quota, usage, bytes);
   } catch {
     return false;
   }

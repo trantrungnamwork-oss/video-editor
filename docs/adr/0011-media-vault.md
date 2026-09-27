@@ -18,7 +18,8 @@ Android Chrome can stop letting us read it mid-session (TL-009: exports failed w
   the original name, type and modification date, so relink matching, export checkpoints
   (`jobKey`) and the UI keep working unchanged. The preview reopens it (new handle token).
 - Before copying, `navigator.storage.estimate()` must leave 512 MB free after the copy (room for
-  exports and the browser); otherwise the copy is skipped and the video behaves as before
+  exports and the browser), or 10 % of the quota when the quota is small (private windows, CI
+  browsers: a fixed 512 MB refused every copy there); otherwise the copy is skipped and the video behaves as before
   (select it again after a reload). The first copy asks for `navigator.storage.persist()`.
 - The saved project marks stored videos. On startup the app reopens their copies before the
   first render (size must match, otherwise the video is listed as missing) and deletes copies
