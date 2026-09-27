@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+test.use({ permissions: ['clipboard-read', 'clipboard-write'] });
+
 test('benchmark page measures a re-encode and a lossless export', async ({ page }) => {
   await page.goto('/bench?auto=1&clip=640x360x3@30');
   await expect(page.getByTestId('bench-json')).toBeVisible({ timeout: 120_000 });
@@ -22,6 +24,11 @@ test('benchmark page measures a re-encode and a lossless export', async ({ page 
     expect(['measureUserAgentSpecificMemory', 'performance.memory']).toContain(r.memoryMethod);
     expect(r.peakMemoryBytes).toBeGreaterThan(0);
   }
+
+  // Copy gives feedback and puts the Markdown rows plus JSON on the clipboard.
+  await page.getByTestId('bench-copy').click();
+  await expect(page.getByTestId('bench-copy')).toHaveText('Copied!');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('| Re-encode |');
 });
 
 test('the benchmark is reachable from the device report (no address bar in the installed app)', async ({

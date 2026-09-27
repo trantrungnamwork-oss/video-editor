@@ -1,3 +1,4 @@
+import { copyText } from './clipboard';
 import { useEffect, useRef, useState } from 'react';
 import { benchMarkdownRows, runBenchmark, type BenchRun } from '../media/bench';
 import { createProbeClient } from '../media/probeClient';
@@ -63,8 +64,11 @@ export function BenchPage() {
   }, []);
 
   const rows = run ? benchMarkdownRows(run, device || 'device?') : [];
-  const copy = () =>
-    void navigator.clipboard.writeText([...rows, '', JSON.stringify(run, null, 2)].join('\n'));
+  const [copied, setCopied] = useState<'idle' | 'ok' | 'failed'>('idle');
+  const copy = async () => {
+    const ok = await copyText([...rows, '', JSON.stringify(run, null, 2)].join('\n'));
+    setCopied(ok ? 'ok' : 'failed');
+  };
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-6">
@@ -144,11 +148,20 @@ export function BenchPage() {
               ))}
             </tbody>
           </table>
-          <button type="button" className="min-h-11 rounded-lg bg-neutral-800 px-4" onClick={copy}>
-            Copy result (Markdown + JSON)
+          <button
+            type="button"
+            className="min-h-11 rounded-lg bg-neutral-800 px-4"
+            onClick={() => void copy()}
+            data-testid="bench-copy"
+          >
+            {copied === 'ok'
+              ? 'Copied!'
+              : copied === 'failed'
+                ? 'Copy failed: long-press the text below to copy it'
+                : 'Copy result (Markdown + JSON)'}
           </button>
           <pre
-            className="overflow-x-auto rounded bg-neutral-900 p-2 text-xs"
+            className="overflow-x-auto rounded bg-neutral-900 p-2 text-xs select-all"
             data-testid="bench-json"
           >
             {JSON.stringify(run)}
