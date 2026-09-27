@@ -183,4 +183,5 @@ Format: see CLAUDE.md §8.
      runs real iOS Safari/WebKit; − simulator uses the Mac's codecs and RAM, so it can catch
      API/feature gaps but not hardware-codec or memory-limit behaviour.
 - Proposal: option 1 for sign-off; option 3 later as a CI smoke test if iOS regressions appear.
-- **Status (2026-09-27): open**, iPhone criteria recorded as not verified.
+- **Decision (2026-09-27): deferred.** iPhone verification is paused by the owner; the iOS
+  criteria of §9 stay "not verified" until option 1 is run.
