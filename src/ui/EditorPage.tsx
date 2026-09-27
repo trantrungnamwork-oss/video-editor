@@ -7,6 +7,7 @@ import type { PreviewPlayer } from '../media/preview/previewPlayer';
 import type { SequenceClip } from '../media/preview/sequence';
 import { DEFAULT_TEST_CLIP, parseTestClipSpec } from '../media/testClip';
 import { requestTestClip } from '../media/testClipClient';
+import { EMPTY_PROJECT } from '../core/project';
 import { useMediaStore } from '../state/mediaStore';
 import { persistChanges } from '../state/persistence';
 import { autoAddImportedMedia, useProjectStore } from '../state/projectStore';
@@ -97,6 +98,14 @@ export function EditorPage() {
       clips: exportClips.map((c) => ({ ...c, file: identityOf(c.file) })),
     }) === pending.key;
 
+  /** Clears the timeline, the library and any unfinished export (after a confirmation). */
+  const startNewProject = () => {
+    if (!confirm('Start a new project? The current timeline and library will be cleared.')) return;
+    useProjectStore.getState().restore(EMPTY_PROJECT);
+    useMediaStore.getState().restoreMissing([]);
+    void discardPendingExport().then(refreshPending);
+  };
+
   const addTestClip = async () => {
     setTestClip('encoding');
     try {
@@ -165,6 +174,14 @@ export function EditorPage() {
             onClick={() => inputRef.current?.click()}
           >
             Select videos
+          </button>
+          <button
+            type="button"
+            className="min-h-11 rounded-lg bg-neutral-800 px-3 font-medium text-neutral-100"
+            onClick={startNewProject}
+            data-testid="new-project"
+          >
+            Start new
           </button>
         </div>
       )}
@@ -244,6 +261,16 @@ export function EditorPage() {
           {testClip === 'encoding' ? 'Encoding…' : 'Add test clip'}
         </button>
       </div>
+      {(project.clips.length > 0 || items.length > 0) && missingCount === 0 && (
+        <button
+          type="button"
+          onClick={startNewProject}
+          data-testid="new-project"
+          className="min-h-11 self-start rounded-lg px-3 text-sm text-neutral-400 active:bg-neutral-800"
+        >
+          New project
+        </button>
+      )}
       {testClip !== 'idle' && testClip !== 'encoding' && (
         <p className="rounded bg-red-950 p-2 text-sm text-red-300" role="alert">
           Test clip failed: {testClip}

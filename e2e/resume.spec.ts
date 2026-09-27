@@ -83,3 +83,17 @@ test('resumes after the page is reloaded mid-export', async ({ page, browser }, 
   await expectFlashes(browser, out.path, FLASH_CHECKS);
   await ctx.close();
 });
+
+test('starts a new project from the relink banner', async ({ page }) => {
+  await openWithTestClips(page, 1, 2);
+  await page.reload(); // generated test clips can't be re-selected: they stay missing
+  await expect(page.getByTestId('missing-banner')).toBeVisible();
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('new-project').click();
+  await expect(page.getByTestId('missing-banner')).toHaveCount(0);
+  await expect(page.getByTestId('timeline-clip')).toHaveCount(0);
+  await expect(page.getByTestId('media-card')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('missing-banner')).toHaveCount(0);
+  await expect(page.getByTestId('media-card')).toHaveCount(0);
+});
