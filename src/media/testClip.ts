@@ -91,7 +91,12 @@ export async function generateTestClip(spec: TestClipSpec): Promise<File> {
     await video.add(t, 1 / fps);
 
     // Keep audio interleaved with video so the muxer never buffers much.
-    const audioUntil = Math.min(totalAudioFrames, Math.round(((i + 1) / fps) * rate));
+    // The last frame also flushes any audio that outlasts the video (durationSec not a whole
+    // number of frames), like the AAC padding on real recordings.
+    const audioUntil =
+      i === frameCount - 1
+        ? totalAudioFrames
+        : Math.min(totalAudioFrames, Math.round(((i + 1) / fps) * rate));
     while (audioPos < audioUntil) {
       const n = Math.min(AUDIO_CHUNK_FRAMES, totalAudioFrames - audioPos);
       const sample = new AudioSample({

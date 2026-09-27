@@ -102,3 +102,19 @@ test('cancels an export and cleans up the partial files', async ({ page }) => {
   });
   expect(files).toEqual([]);
 });
+
+test('exports a clip whose audio outlasts the last video frame past a segment boundary', async ({
+  page,
+}) => {
+  // 1 fps x 10.4 s: video frames end at 10 s, audio runs to 10.4 s, so the timeline is 10.4 s
+  // long and the range [10, 10.4) holds no video frame (like AAC padding on phone recordings).
+  await page.goto('/?testclip=1280x720x10.4@1');
+  await page.getByTestId('add-test-clip').click();
+  await expect(page.getByTestId('timeline-clip')).toHaveCount(1, { timeout: 60_000 });
+  await page.getByTestId('open-export').click();
+  await startReencodeExport(page);
+  const out = await finishExportAndDownload(page);
+  const info = await probeFile(out.path);
+  expect(info.durationSec).toBeCloseTo(10.4, 1);
+  expect(info.video.displayWidth).toBe(1280);
+});

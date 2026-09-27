@@ -14,6 +14,15 @@ describe('planSegments', () => {
     expect(planSegments(10, 10)).toHaveLength(1);
     expect(planSegments(0, 10)).toEqual([]);
   });
+
+  it('folds a short remainder into the last segment', () => {
+    // 60 s of video whose AAC track runs a few ms longer: no empty sliver segment.
+    expect(planSegments(60.0107, 10)).toHaveLength(6);
+    expect(planSegments(60.0107, 10).at(-1)).toEqual({ index: 5, startSec: 50, endSec: 60.0107 });
+    expect(planSegments(20.5, 10).map((s) => s.endSec)).toEqual([10, 20.5]);
+    expect(planSegments(21, 10).map((s) => s.endSec)).toEqual([10, 20, 21]);
+    expect(planSegments(0.5, 10)).toEqual([{ index: 0, startSec: 0, endSec: 0.5 }]);
+  });
 });
 
 describe('slicesInRange', () => {

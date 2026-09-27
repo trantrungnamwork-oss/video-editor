@@ -467,8 +467,10 @@ async function mux(
       check();
       const input = openClip(await store.file(segName(seg, format)));
       try {
+        // A range with no frame (audio outlasting the video) yields a segment without a video
+        // track; there is nothing to copy. Frames are never dropped, so this loses no video.
         const track = await input.getPrimaryVideoTrack();
-        if (!track) throw new Error(`segment ${seg.index} has no video`);
+        if (!track) continue;
         const config = await track.getDecoderConfig();
         if (!config) throw new Error(`segment ${seg.index}: unknown codec`);
         if (baseConfig && !sameDecoderConfig(baseConfig, config)) {
@@ -485,6 +487,7 @@ async function mux(
       }
       progress((seg.index + 1) / segments.length);
     }
+    if (!baseConfig) throw new Error('The export produced no video frames');
   };
 
   const copyAudio = async () => {

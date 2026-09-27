@@ -17,10 +17,18 @@ export interface Segment {
   endSec: number;
 }
 
+/**
+ * A remainder shorter than this joins the previous segment. Container durations often run a few
+ * ms past the last video frame (AAC priming/padding), and such a sliver would hold no frame.
+ */
+export const MIN_TAIL_SEC = 1;
+
 export function planSegments(totalSec: number, segmentSec = SEGMENT_SEC): Segment[] {
   const segments: Segment[] = [];
   for (let i = 0, t = 0; t < totalSec - 1e-6; i++, t += segmentSec) {
-    segments.push({ index: i, startSec: t, endSec: Math.min(totalSec, t + segmentSec) });
+    const endSec = totalSec - (t + segmentSec) < MIN_TAIL_SEC ? totalSec : t + segmentSec;
+    segments.push({ index: i, startSec: t, endSec });
+    if (endSec === totalSec) break;
   }
   return segments;
 }
