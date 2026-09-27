@@ -185,3 +185,26 @@ Format: see CLAUDE.md §8.
 - Proposal: option 1 for sign-off; option 3 later as a CI smoke test if iOS regressions appear.
 - **Decision (2026-09-27): deferred.** iPhone verification is paused by the owner; the iOS
   criteria of §9 stay "not verified" until option 1 is run.
+
+## TL-009: Android Chrome loses read access to picked videos
+
+- Affected platforms: Android Chrome (seen on Xiaomi Note 15 Pro, Chrome 153), gallery videos.
+- Severity: Serious (export impossible until the video is picked again)
+- Observed (2026-09-27): after editing a phone-recorded portrait video for a while, both the
+  lossless analysis ("Original") and the 720p/1080p export failed with `TypeError: network
+error`, the error Chromium raises when a `File` can no longer be read. The preview kept showing
+  frames from bytes it had already cached.
+- Why: a `File` from `<input type="file">` is only a handle to the original (on Android a
+  `content://` URI). If the grant expires or the file changes (gallery app, cloud sync, the app
+  being backgrounded), reads fail. The web platform offers no way to renew the grant; only the
+  user can pick the file again.
+- Options:
+  1. Detect the read failure, mark the video as "needs re-selecting" (the existing relink flow,
+     matched by name + size + date) and say so clearly. + small, no storage cost; − the user
+     must pick the file again, possibly mid-export (the export resumes afterwards).
+  2. Copy each imported video into OPFS on import and edit the copy. + never loses access, and
+     the project reopens after a reload with no relink; − import takes time (≈ 1–3 s per 100 MB)
+     and doubles storage use until the video is removed; browsers may refuse when storage is low.
+  3. Both: copy into OPFS when storage allows, fall back to 1 otherwise.
+- Proposal: 1 now, 3 as a follow-up.
+- **Status (2026-09-27): open**, waiting for the owner's decision.
